@@ -1,0 +1,88 @@
+# Discoverable Distributed Actors
+
+`DiscoverableActors` adds a small, typed discovery layer to Swift distributed actors. The `@Discoverable` macro generates two distributed methods:
+
+- `describe()`, which reports the actor kind, documentation summary, available actions, and JSON Schema-like argument descriptions.
+- `invoke(_:arguments:)`, which decodes an `ActionValue`, dispatches by action name, and encodes the result.
+
+The package targets macOS 15 and Swift 6.2.
+
+## Example
+
+```swift
+import DiscoverableActors
+import Distributed
+
+/// A list of things to do.
+@Discoverable
+distributed actor TodoList {
+    typealias ActorSystem = LocalTestingDistributedActorSystem
+
+    private var items: [String] = []
+
+    /// Add an item.
+    /// - Parameter title: The item text.
+    public distributed func add(title: String) {
+        items.append(title)
+    }
+
+    /// List all items.
+    public distributed func list() -> [String] {
+        items
+    }
+
+    /// Clear the list for local maintenance.
+    @DiscoveryIgnored
+    public distributed func reset() {
+        items.removeAll()
+    }
+}
+```
+
+The generated API can be used without knowing the actor's concrete action methods:
+
+```swift
+let list = TodoList(actorSystem: system)
+let object = try await list.describe()
+
+_ = try await list.invoke("add", arguments: ["title": "Buy milk"])
+let result = try await list.invoke("list", arguments: nil)
+let items = try result.decode([String].self)
+```
+
+Public `distributed` methods become actions. Their `///` comments provide summaries, and `- Parameter` comments provide parameter descriptions. Optional and default-valued parameters are optional in the generated schema. Use `@DiscoveryIgnored` for public distributed methods that are infrastructure rather than user-facing actions.
+
+Types with richer schema information can conform to `JSONSchemaRepresentable`:
+
+```swift
+enum Priority: String, Codable, JSONSchemaRepresentable {
+    case low, high
+
+    static let jsonSchema: ActionValue = [
+        "type": "string",
+        "enum": ["low", "high"]
+    ]
+}
+```
+
+`ActionValue` represents JSON-compatible nulls, booleans, numbers, strings, arrays, and objects. Unknown actions, missing required arguments, unexpected argument keys, and invalid argument shapes are reported as `DiscoveryError` values.
+
+## Development
+
+Format Swift sources with:
+
+```sh
+swift-format format --in-place --recursive Sources Tests
+```
+
+Run the test suite with:
+
+```sh
+swift test
+```
+
+The test target also depends on `swift-distributed-actors` to exercise discovery with a distributed actor system.
+
+## License
+
+Discoverable Distributed Actors is licensed under the Apache License, Version 2.0. See [LICENSE.txt](LICENSE.txt).
