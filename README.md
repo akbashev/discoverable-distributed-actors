@@ -50,6 +50,21 @@ let result = try await list.invoke("list", arguments: nil)
 let items = try result.decode([String].self)
 ```
 
+For callers that do not know the concrete actor type, resolve the generated `DiscoverableActor` reference from its distributed ID:
+
+```swift
+let reference = try $DiscoverableActor<LocalTestingDistributedActorSystem>.resolve(
+    id: list.id,
+    using: system
+)
+
+let description = try await reference.describe()
+let result = try await reference.invoke("list", arguments: nil)
+let items = try result.decode([String].self)
+```
+
+The same pattern works with a cluster actor system: the ID can come from another node, while the caller only depends on `DiscoverableActor` and the action schema.
+
 Public `distributed` methods become actions. Their `///` comments provide summaries, and `- Parameter` comments provide parameter descriptions. Optional and default-valued parameters are optional in the generated schema. Use `@DiscoveryIgnored` for public distributed methods that are infrastructure rather than user-facing actions.
 
 Types with richer schema information can conform to `JSONSchemaRepresentable`:
