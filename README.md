@@ -3,7 +3,7 @@
 `DiscoverableActors` adds a small, typed discovery layer to Swift distributed actors. The `@Discoverable` macro generates two distributed methods:
 
 - `describe()`, which reports the actor kind, documentation summary, available actions, and JSON Schema-like argument descriptions.
-- `invoke(_:arguments:)`, which decodes an `ActionValue`, dispatches by action name, and encodes the result.
+- `invoke(_:arguments:)`, which decodes a `JSONValue`, dispatches by action name, and encodes the result.
 
 The package targets macOS 15 and Swift 6.2.
 
@@ -100,14 +100,14 @@ Types with richer schema information can conform to `JSONSchemaRepresentable`:
 enum Priority: String, Codable, JSONSchemaRepresentable {
     case low, high
 
-    static let jsonSchema: ActionValue = [
+    static let jsonSchema: JSONValue = [
         "type": "string",
         "enum": ["low", "high"]
     ]
 }
 ```
 
-`ActionValue` represents JSON-compatible nulls, booleans, numbers, strings, arrays, and objects. Unknown actions, missing required arguments, unexpected argument keys, and invalid argument shapes are reported as `DiscoveryError` values.
+`JSONValue` represents JSON-compatible nulls, booleans, numbers, strings, arrays, and objects. Unknown actions, missing required arguments, unexpected argument keys, and invalid argument shapes are reported as `DiscoveryError` values.
 
 ## Development
 

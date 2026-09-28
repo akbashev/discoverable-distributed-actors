@@ -115,8 +115,8 @@ public struct DiscoverableMacro: MemberMacro, ExtensionMacro {
             let invoke: DeclSyntax = """
                 public distributed func invoke(
                     _ action: String,
-                    arguments: DiscoverableActors.ActionValue
-                ) async throws -> DiscoverableActors.ActionValue {
+                    arguments: DiscoverableActors.JSONValue
+                ) async throws -> DiscoverableActors.JSONValue {
                     switch action {
                     \(raw: cases.joined(separator: "\n"))
                     default:

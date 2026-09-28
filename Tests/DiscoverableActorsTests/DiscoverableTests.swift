@@ -58,7 +58,7 @@ struct Item: Codable, Equatable {
 
 enum Priority: String, Codable, JSONSchemaRepresentable {
     case low, high
-    static var jsonSchema: ActionValue { ["type": "string", "enum": ["low", "high"]] }
+    static var jsonSchema: JSONValue { ["type": "string", "enum": ["low", "high"]] }
 }
 
 enum TodoError: Error {

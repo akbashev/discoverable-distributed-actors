@@ -5,15 +5,15 @@
 #endif
 
 /// A JSON value: action arguments, results, and schemas.
-public enum ActionValue: Codable, Sendable, Hashable {
+public enum JSONValue: Codable, Sendable, Hashable {
     case null
     case bool(Bool)
     case number(Double)
     case integer(Int64)
     case unsignedInteger(UInt64)
     case string(String)
-    case array([ActionValue])
-    case object([String: ActionValue])
+    case array([JSONValue])
+    case object([String: JSONValue])
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.singleValueContainer()
@@ -29,10 +29,10 @@ public enum ActionValue: Codable, Sendable, Hashable {
             self = .number(value)
         } else if let value = try? container.decode(String.self) {
             self = .string(value)
-        } else if let value = try? container.decode([ActionValue].self) {
+        } else if let value = try? container.decode([JSONValue].self) {
             self = .array(value)
         } else {
-            self = .object(try container.decode([String: ActionValue].self))
+            self = .object(try container.decode([String: JSONValue].self))
         }
     }
 
@@ -57,11 +57,11 @@ public enum ActionValue: Codable, Sendable, Hashable {
     }
 }
 
-extension ActionValue {
+extension JSONValue {
     /// Converts any `Encodable` value through its JSON form.
     public init<Value: Encodable>(encoding value: Value) throws {
         let data = try JSONEncoder().encode(value)
-        self = try JSONDecoder().decode(ActionValue.self, from: data)
+        self = try JSONDecoder().decode(JSONValue.self, from: data)
     }
 
     /// Decodes a `Decodable` value from this JSON.
@@ -70,13 +70,13 @@ extension ActionValue {
         return try JSONDecoder().decode(type, from: data)
     }
 
-    public subscript(key: String) -> ActionValue? {
+    public subscript(key: String) -> JSONValue? {
         guard case .object(let properties) = self else { return nil }
         return properties[key]
     }
 }
 
-extension ActionValue: ExpressibleByNilLiteral, ExpressibleByBooleanLiteral, ExpressibleByIntegerLiteral,
+extension JSONValue: ExpressibleByNilLiteral, ExpressibleByBooleanLiteral, ExpressibleByIntegerLiteral,
     ExpressibleByFloatLiteral, ExpressibleByStringLiteral, ExpressibleByArrayLiteral,
     ExpressibleByDictionaryLiteral
 {
@@ -85,8 +85,8 @@ extension ActionValue: ExpressibleByNilLiteral, ExpressibleByBooleanLiteral, Exp
     public init(integerLiteral value: Int) { self = .integer(Int64(value)) }
     public init(floatLiteral value: Double) { self = .number(value) }
     public init(stringLiteral value: String) { self = .string(value) }
-    public init(arrayLiteral elements: ActionValue...) { self = .array(elements) }
-    public init(dictionaryLiteral elements: (String, ActionValue)...) {
+    public init(arrayLiteral elements: JSONValue...) { self = .array(elements) }
+    public init(dictionaryLiteral elements: (String, JSONValue)...) {
         self = .object(Dictionary(elements, uniquingKeysWith: { _, last in last }))
     }
 }

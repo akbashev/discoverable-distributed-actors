@@ -26,7 +26,7 @@ where ActorSystem: DistributedActorSystem<any Codable> {
     distributed func describe() async throws -> ObjectDescription
 
     /// Runs the named action with arguments matching its schema.
-    distributed func invoke(_ action: String, arguments: ActionValue) async throws -> ActionValue
+    distributed func invoke(_ action: String, arguments: JSONValue) async throws -> JSONValue
 }
 
 /// What an object is and what it can do.
@@ -47,9 +47,9 @@ public struct ObjectAction: Codable, Sendable, Equatable {
     public var name: String
     public var summary: String?
     /// A JSON Schema for the arguments; `nil` when the action takes none.
-    public var arguments: ActionValue?
+    public var arguments: JSONValue?
 
-    public init(name: String, summary: String?, arguments: ActionValue?) {
+    public init(name: String, summary: String?, arguments: JSONValue?) {
         self.name = name
         self.summary = summary
         self.arguments = arguments
