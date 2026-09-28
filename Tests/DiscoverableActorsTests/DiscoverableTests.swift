@@ -7,12 +7,20 @@ import Testing
 distributed actor TodoList {
     typealias ActorSystem = LocalTestingDistributedActorSystem
 
+    /// Current items in the list.
     private var items: [Item] = []
+
+    /// Number of items currently in the list.
+    public distributed var itemCount: Int { items.count }
+
+    @DiscoverableIgnored
+    public distributed var internalState: String { "hidden" }
 
     /// Add an item to the list.
     /// - Parameter title: What needs doing.
-    public distributed func add(title: String) {
+    public distributed func add(title: String) -> String {
         items.append(Item(title: title, tags: []))
+        return title
     }
 
     /// Remove an item.
@@ -38,17 +46,24 @@ distributed actor TodoList {
         items
     }
 
+    /// Label a value.
+    /// - Parameter value: The value to label.
+    public distributed func label(_ value: String = "untitled") -> String {
+        value
+    }
+
     /// Move to a priority.
     /// - Parameter priority: How urgent.
     public distributed func prioritize(_ priority: Priority) {}
 
     /// Plumbing, not something an agent should call.
-    @DiscoveryIgnored
+    @DiscoverableIgnored
     public distributed func reset() {
         items = []
     }
 
     distributed func internalOnly() {}
+
 }
 
 struct Item: Codable, Equatable {
@@ -70,7 +85,7 @@ struct DiscoverableTests {
     let system = LocalTestingDistributedActorSystem()
 
     func action(_ name: String, of list: TodoList) async throws -> ObjectAction {
-        try #require(try await list.describe().actions.first { $0.name == name })
+        try #require(try await list.describe().actions[name])
     }
 
     @Test
@@ -78,29 +93,40 @@ struct DiscoverableTests {
         let list = TodoList(actorSystem: system)
         let description = try await list.describe()
 
-        #expect(description.kind == "TodoList")
-        #expect(description.summary == "A list of things to do today.")
-        #expect(description.actions.map(\.name) == ["add", "remove", "tag", "list", "prioritize"])
+        #expect(description.title == "TodoList")
+        #expect(description.description == "A list of things to do today.")
+        #expect(Set(description.actions.keys) == ["add", "remove", "tag", "list", "label", "prioritize"])
+        #expect(description.properties["itemCount"]?["description"] == "Number of items currently in the list.")
+        #expect(description.properties["itemCount"]?["type"] == "integer")
+        #expect(description.properties["itemCount"]?["readOnly"] == true)
+        #expect(description.properties["items"] == nil)
+        #expect(description.properties["internalState"] == nil)
+        #expect(description.links.isEmpty)
 
         let add = try await action("add", of: list)
-        #expect(add.summary == "Add an item to the list.")
-        #expect(try await action("list", of: list).arguments == nil)
+        #expect(add.description == "Add an item to the list.")
+        #expect(try await action("list", of: list).input == nil)
+        #expect(try await action("list", of: list).output?["type"] == "array")
     }
 
     @Test
     func buildsArgumentSchemas() async throws {
         let list = TodoList(actorSystem: system)
 
-        let remove = try #require(try await action("remove", of: list).arguments)
+        let remove = try #require(try await action("remove", of: list).input)
         #expect(remove["type"] == "object")
         #expect(remove["required"] == ["index"])
         #expect(
             remove["properties"]?["index"] == [
                 "type": "integer", "description": "Position of the item, starting at zero.",
             ])
-        #expect(remove["properties"]?["reason"] == ["type": "string", "description": "Why it was removed."])
+        #expect(
+            remove["properties"]?["reason"] == [
+                "anyOf": [["type": "string"], ["type": "null"]],
+                "description": "Why it was removed.",
+            ])
 
-        let tag = try #require(try await action("tag", of: list).arguments)
+        let tag = try #require(try await action("tag", of: list).input)
         #expect(
             tag["properties"]?["tags"] == ["type": "array", "items": ["type": "string"], "description": "Tags to add."])
     }
@@ -108,12 +134,35 @@ struct DiscoverableTests {
     @Test
     func typesCanSupplyTheirOwnSchema() async throws {
         let list = TodoList(actorSystem: system)
-        let schema = try #require(try await action("prioritize", of: list).arguments)
+        let schema = try #require(try await action("prioritize", of: list).input)
 
         #expect(
             schema["properties"]?["priority"] == [
                 "type": "string", "enum": ["low", "high"], "description": "How urgent.",
             ])
+    }
+
+    @Test
+    func defaultArgumentsApplyOnlyWhenOmitted() async throws {
+        let list = TodoList(actorSystem: system)
+
+        #expect(try await list.invoke("label", arguments: [:]) == "untitled")
+        await #expect(throws: DecodingError.self) {
+            try await list.invoke("label", arguments: ["value": nil])
+        }
+    }
+
+    @Test
+    func readsDistributedPropertiesByName() async throws {
+        let list = TodoList(actorSystem: system)
+
+        #expect(try await list.read(property: "itemCount") == 0)
+        _ = try await list.invoke("add", arguments: ["title": "Buy milk"])
+        #expect(try await list.read(property: "itemCount") == 1)
+
+        await #expect(throws: DiscoveryError.unknownProperty("missing")) {
+            try await list.read(property: "missing")
+        }
     }
 
     @Test
@@ -131,8 +180,11 @@ struct DiscoverableTests {
                 Item(title: "Call mum", tags: ["family"]),
             ])
 
-        let removed = try await list.invoke("remove", arguments: ["index": 0])
+        let removed = try await list.invoke("remove", arguments: ["index": 0, "reason": nil])
         #expect(removed == "Buy milk")
+
+        let added = try await list.invoke("add", arguments: ["title": "Read"])
+        #expect(added == "Read")
     }
 
     @Test

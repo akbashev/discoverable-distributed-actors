@@ -1,9 +1,12 @@
 # Discoverable Distributed Actors
 
-`DiscoverableActors` adds a small, typed discovery layer to Swift distributed actors. The `@Discoverable` macro generates two distributed methods:
+`DiscoverableActors` gives Swift distributed actors a description that other actors and callers can inspect and use without knowing their concrete Swift type. Its description borrows the `title`, `description`, `properties`, `actions`, and `links` vocabulary from the W3C Thing Description standard. It implements a small subset, not the full standard.
 
-- `describe()`, which reports the actor kind, documentation summary, available actions, and JSON Schema-like argument descriptions.
-- `invoke(_:arguments:)`, which decodes a `JSONValue`, dispatches by action name, and encodes the result.
+The `@Discoverable` macro generates two distributed methods:
+
+- `describe()`, which reports public distributed properties and documented actions with input and output schemas.
+- `invoke(_:arguments:)`, which decodes a `JSONValue`, dispatches by action name, and encodes the ordinary Swift return value as `JSONValue`.
+- `read(property:)`, which reads a distributed property by name and encodes its current value as `JSONValue`.
 
 The package targets macOS 15 and Swift 6.2.
 
@@ -20,10 +23,14 @@ distributed actor TodoList {
 
     private var items: [String] = []
 
+    /// Number of items currently in the list.
+    public distributed var itemCount: Int { items.count }
+
     /// Add an item.
     /// - Parameter title: The item text.
-    public distributed func add(title: String) {
+    public distributed func add(title: String) -> String {
         items.append(title)
+        return title
     }
 
     /// List all items.
@@ -32,7 +39,7 @@ distributed actor TodoList {
     }
 
     /// Clear the list for local maintenance.
-    @DiscoveryIgnored
+    @DiscoverableIgnored
     public distributed func reset() {
         items.removeAll()
     }
@@ -46,6 +53,7 @@ let list = TodoList(actorSystem: system)
 let object = try await list.describe()
 
 _ = try await list.invoke("add", arguments: ["title": "Buy milk"])
+let count = try await list.read(property: "itemCount")
 let result = try await list.invoke("list", arguments: nil)
 let items = try result.decode([String].self)
 ```
@@ -54,13 +62,19 @@ For the example above, `object` contains this information (shown conceptually):
 
 ```swift
 ObjectDescription(
-    kind: "TodoList",
-    summary: "A list of things to do.",
+    title: "TodoList",
+    description: "A list of things to do.",
+    properties: [
+        "itemCount": [
+            "type": "integer",
+            "description": "Number of items currently in the list.",
+            "readOnly": true
+        ]
+    ],
     actions: [
-        ObjectAction(
-            name: "add",
-            summary: "Add an item.",
-            arguments: [
+        "add": ObjectAction(
+            description: "Add an item.",
+            input: [
                 "type": "object",
                 "properties": [
                     "title": [
@@ -70,9 +84,14 @@ ObjectDescription(
                 ],
                 "required": ["title"],
                 "additionalProperties": false
-            ]
+            ],
+            output: ["type": "string"]
         ),
-        ObjectAction(name: "list", summary: "List all items.", arguments: nil)
+        "list": ObjectAction(
+            description: "List all items.",
+            input: nil,
+            output: ["type": "array", "items": ["type": "string"]]
+        )
     ]
 )
 ```
@@ -86,13 +105,16 @@ let reference = try $DiscoverableActor<LocalTestingDistributedActorSystem>.resol
 )
 
 let description = try await reference.describe()
+let count = try await reference.read(property: "itemCount")
 let result = try await reference.invoke("list", arguments: nil)
 let items = try result.decode([String].self)
 ```
 
+Actor methods keep their ordinary Swift signatures. Public distributed methods and read-only distributed properties appear in the description by default. Local actor state remains private. Property schemas use the W3C data-schema shape; read current values with `read(property:)`. Use `@DiscoverableIgnored` to omit a distributed property or method. Applying it to an ordinary local property is an error because that property is not distributed. Links use `rel` and `href`, following the standard's link shape. This package describes links but does not assign actor IDs to URIs or implement URI resolution.
+
 The same pattern works with a cluster actor system: the ID can come from another node, while the caller only depends on `DiscoverableActor` and the action schema.
 
-Public `distributed` methods become actions. Their `///` comments provide summaries, and `- Parameter` comments provide parameter descriptions. Optional and default-valued parameters are optional in the generated schema. Use `@DiscoveryIgnored` for public distributed methods that are infrastructure rather than user-facing actions.
+Public `distributed` methods become actions, identified by their method names. Their `///` comments provide descriptions, and `- Parameter` comments provide parameter descriptions. Optional and default-valued parameters are optional in the generated schema. Use `@DiscoverableIgnored` for methods or properties that should remain private to the implementation.
 
 Types with richer schema information can conform to `JSONSchemaRepresentable`:
 

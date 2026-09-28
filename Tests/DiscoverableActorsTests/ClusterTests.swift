@@ -34,6 +34,8 @@ distributed actor Counter {
 
     private var value = 0
 
+    public distributed var count: Int { value }
+
     /// Add to the count.
     /// - Parameter amount: How much to add.
     public distributed func increment(by amount: Int) -> Int {
@@ -78,7 +80,7 @@ struct ClusterTests {
         let counter = Counter(actorSystem: system)
         let object = try $DiscoverableActor<ClusterSystem>.resolve(id: counter.id, using: system)
 
-        #expect(try await object.describe().kind == "Counter")
+        #expect(try await object.describe().title == "Counter")
         #expect(try await object.invoke("increment", arguments: ["amount": 2]) == 2)
     }
 
@@ -90,10 +92,13 @@ struct ClusterTests {
             let object = try $DiscoverableActor<ClusterSystem>.resolve(id: counter.id, using: second)
 
             let description = try await object.describe()
-            #expect(description.kind == "Counter")
+            #expect(description.title == "Counter")
             #expect(
-                description.actions.first?.arguments?["properties"]?["amount"]?["description"] == "How much to add.")
+                description.actions["increment"]?.input?["properties"]?["amount"]?["description"] == "How much to add.")
+            #expect(description.properties["count"]?["type"] == "integer")
+            #expect(try await object.read(property: "count") == 0)
             #expect(try await object.invoke("increment", arguments: ["amount": 5]) == 5)
+            #expect(try await object.read(property: "count") == 5)
             #expect(try await object.invoke("increment", arguments: ["amount": 1]) == 6)
         }
     }

@@ -14,10 +14,10 @@ struct Point: Codable, SchemaFromElsewhere {
 extension Discovery {
     static func parameter<Value: SchemaFromElsewhere>(
         _ name: String,
-        summary: String?,
+        description: String?,
         type: Value.Type
     ) -> Parameter {
-        Parameter(name: name, schema: describing(["x-source": "extension"], summary), isOptional: false)
+        Parameter(name: name, schema: describing(["x-source": "extension"], description), isOptional: false)
     }
 }
 
@@ -37,8 +37,8 @@ distributed actor Plotter {
 @Test
 func moreConstrainedOverloadsFromOtherModulesWin() async throws {
     let actions = try await Plotter(actorSystem: LocalTestingDistributedActorSystem()).describe().actions
-    let plot = try #require(actions.first { $0.name == "plot" }?.arguments)
-    let label = try #require(actions.first { $0.name == "label" }?.arguments)
+    let plot = try #require(actions["plot"]?.input)
+    let label = try #require(actions["label"]?.input)
 
     #expect(plot["properties"]?["point"] == ["x-source": "extension", "description": "Where."])
     #expect(label["properties"]?["text"] == ["type": "string", "description": "The label."])

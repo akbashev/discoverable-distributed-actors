@@ -1,25 +1,44 @@
-import Foundation
 import SwiftCompilerPlugin
 import SwiftDiagnostics
 import SwiftSyntax
 import SwiftSyntaxBuilder
 import SwiftSyntaxMacros
 
+#if canImport(FoundationEssentials)
+    import FoundationEssentials
+#else
+    import Foundation
+#endif
+
 @main
 struct DiscoverableActorsMacrosPlugin: CompilerPlugin {
     let providingMacros: [Macro.Type] = [
         DiscoverableMacro.self,
-        DiscoveryIgnoredMacro.self,
+        DiscoverableIgnoredMacro.self,
     ]
 }
 
-public struct DiscoveryIgnoredMacro: PeerMacro {
+public struct DiscoverableIgnoredMacro: PeerMacro {
     public static func expansion(
         of node: AttributeSyntax,
         providingPeersOf declaration: some DeclSyntaxProtocol,
         in context: some MacroExpansionContext
     ) throws -> [DeclSyntax] {
-        []
+        if let variable = declaration.as(VariableDeclSyntax.self),
+            !variable.modifiers.contains(where: { $0.name.tokenKind == .keyword(.distributed) })
+        {
+            let name = variable.bindings.first?.pattern.trimmedDescription ?? "<unknown>"
+            context.diagnose(
+                Diagnostic(node: node, message: DiscoveryIgnoredDiagnostic.notDistributedProperty(name)))
+        } else if let function = declaration.as(FunctionDeclSyntax.self),
+            !function.modifiers.contains(where: { $0.name.tokenKind == .keyword(.distributed) })
+        {
+            context.diagnose(
+                Diagnostic(node: node, message: DiscoveryIgnoredDiagnostic.notDistributedMethod(function.name.text)))
+        } else if declaration.as(VariableDeclSyntax.self) == nil, declaration.as(FunctionDeclSyntax.self) == nil {
+            context.diagnose(Diagnostic(node: node, message: DiscoveryIgnoredDiagnostic.unsupportedDeclaration))
+        }
+        return []
     }
 }
 
@@ -50,44 +69,63 @@ public struct DiscoverableMacro: MemberMacro, ExtensionMacro {
         }
 
         let actions = collectActions(in: actor, context: context)
-        let kind = actor.name.text
-        let summary = Documentation(actor.leadingTrivia).summary
+        let properties = collectProperties(in: actor)
+        let title = actor.name.text
+        let description = Documentation(actor.leadingTrivia).summary
 
-        let describedActions = actions.map { action in
+        let actionStatements = actions.map { action in
             let parameters = action.parameters.map { parameter in
                 let factory = parameter.isOptional || parameter.defaultValue != nil ? "optionalParameter" : "parameter"
+                let nullArgument = factory == "optionalParameter" ? ", allowsNull: \(parameter.isOptional)" : ""
+                let schemaType = parameter.isOptional ? parameter.declaredType : parameter.valueType
                 return
-                    "DiscoverableActors.Discovery.\(factory)(\(literal(parameter.key)), summary: \(literal(parameter.summary)), type: \(parameter.valueType).self)"
+                    "DiscoverableActors.Discovery.\(factory)(\(literal(parameter.key)), description: \(literal(parameter.summary)), type: \(schemaType).self\(nullArgument))"
             }
-            return """
-                DiscoverableActors.ObjectAction(
-                    name: \(literal(action.name)),
-                    summary: \(literal(action.summary)),
-                    arguments: DiscoverableActors.Discovery.schema(
-                        summary: \(literal(action.summary)),
-                        parameters: [\(parameters.joined(separator: ", "))]
+            return conditional(
+                action.condition,
+                around: """
+                    actions[\(literal(action.name))] = DiscoverableActors.ObjectAction(
+                        description: \(literal(action.summary)),
+                        input: DiscoverableActors.Discovery.schema(
+                            description: \(literal(action.summary)),
+                            parameters: [\(parameters.joined(separator: ", "))]
+                        ),
+                        output: \(action.resultType.map { "DiscoverableActors.Discovery.resultSchema(for: \($0).self)" } ?? "nil")
                     )
-                )
-                """
+                    """)
         }
+        let propertyStatements = properties.map { property in
+            let schema =
+                property.type.map {
+                    "DiscoverableActors.Discovery.propertySchema(for: \($0).self, description: \(literal(property.description)))"
+                } ?? "[:]"
+            return conditional(property.condition, around: "properties[\(literal(property.name))] = \(schema)")
+        }
+        let propertiesDeclaration =
+            propertyStatements.isEmpty
+            ? "let properties: [String: DiscoverableActors.JSONValue] = [:]"
+            : "var properties: [String: DiscoverableActors.JSONValue] = [:]"
+        let actionsDeclaration =
+            actionStatements.isEmpty
+            ? "let actions: [String: DiscoverableActors.ObjectAction] = [:]"
+            : "var actions: [String: DiscoverableActors.ObjectAction] = [:]"
 
-        let existingNames = Set(
-            actor.memberBlock.members.compactMap { member -> String? in
-                member.decl.as(FunctionDeclSyntax.self)?.name.text
-            })
         var generated: [DeclSyntax] = []
-        if !existingNames.contains("describe") {
-            let describe: DeclSyntax = """
-                public distributed func describe() -> DiscoverableActors.ObjectDescription {
-                    DiscoverableActors.ObjectDescription(
-                        kind: \(raw: literal(kind)),
-                        summary: \(raw: literal(summary)),
-                        actions: [\(raw: describedActions.joined(separator: ",\n"))]
-                    )
-                }
-                """
-            generated.append(describe)
-        }
+        let describe: DeclSyntax = """
+            public distributed func describe() -> DiscoverableActors.ObjectDescription {
+                \(raw: propertiesDeclaration)
+                \(raw: propertyStatements.joined(separator: "\n"))
+                \(raw: actionsDeclaration)
+                \(raw: actionStatements.joined(separator: "\n"))
+                return DiscoverableActors.ObjectDescription(
+                    title: \(raw: literal(title)),
+                    description: \(raw: literal(description)),
+                    properties: properties,
+                    actions: actions
+                )
+            }
+            """
+        generated.append(describe)
 
         let cases = actions.map { action in
             let allowedKeys = action.parameters.map { literal($0.key) }.joined(separator: ", ")
@@ -98,7 +136,7 @@ public struct DiscoverableMacro: MemberMacro, ExtensionMacro {
                     "try DiscoverableActors.Discovery.\(reader)(\(parameter.valueType).self, \(literal(parameter.key)), in: arguments)"
                 let value =
                     parameter.defaultValue.map {
-                        "(try DiscoverableActors.Discovery.optionalArgument(\(parameter.declaredType).self, \(literal(parameter.key)), in: arguments) ?? (\($0)))"
+                        "try DiscoverableActors.Discovery.defaultedArgument(\(parameter.declaredType).self, \(literal(parameter.key)), in: arguments, default: (\($0)))"
                     } ?? decoded
                 return parameter.label.map { "\($0): \(value)" } ?? value
             }
@@ -107,25 +145,41 @@ public struct DiscoverableMacro: MemberMacro, ExtensionMacro {
             let body =
                 action.returnsValue
                 ? "return try DiscoverableActors.Discovery.result(\(call))"
-                : "\(call)\nreturn DiscoverableActors.Discovery.void"
-            return "case \(literal(action.name)):\n\(validation)\n\(body)"
+                : "\(call)\nreturn .null"
+            return conditional(action.condition, around: "case \(literal(action.name)):\n\(validation)\n\(body)")
         }
 
-        if !existingNames.contains("invoke") {
-            let invoke: DeclSyntax = """
-                public distributed func invoke(
-                    _ action: String,
-                    arguments: DiscoverableActors.JSONValue
-                ) async throws -> DiscoverableActors.JSONValue {
-                    switch action {
-                    \(raw: cases.joined(separator: "\n"))
-                    default:
-                        throw DiscoverableActors.DiscoveryError.unknownAction(action)
-                    }
+        let invoke: DeclSyntax = """
+            public distributed func invoke(
+                _ action: String,
+                arguments: DiscoverableActors.JSONValue
+            ) async throws -> DiscoverableActors.JSONValue {
+                switch action {
+                \(raw: cases.joined(separator: "\n"))
+                default:
+                    throw DiscoverableActors.DiscoveryError.unknownAction(action)
                 }
-                """
-            generated.append(invoke)
+            }
+            """
+        generated.append(invoke)
+
+        let propertyCases = properties.map { property in
+            conditional(
+                property.condition,
+                around:
+                    "case \(literal(property.name)): return try DiscoverableActors.Discovery.result(self.\(property.name))"
+            )
         }
+        let readProperty: DeclSyntax = """
+            public distributed func read(property name: String) throws -> DiscoverableActors.JSONValue {
+                switch name {
+                \(raw: propertyCases.joined(separator: "\n"))
+                default:
+                    throw DiscoverableActors.DiscoveryError.unknownProperty(name)
+                }
+            }
+            """
+        generated.append(readProperty)
 
         return generated
     }
@@ -139,7 +193,24 @@ private struct Action {
     let parameters: [Parameter]
     let isAsync: Bool
     let isThrowing: Bool
-    let returnsValue: Bool
+    let resultType: String?
+    let condition: String?
+    let branches: [ConditionalBranch]
+
+    var returnsValue: Bool { resultType != nil }
+}
+
+private struct Property {
+    let name: String
+    let type: String?
+    let description: String?
+    let condition: String?
+    let branches: [ConditionalBranch]
+}
+
+private struct ConditionalBranch: Equatable {
+    let group: Int
+    let clause: Int
 }
 
 private struct Parameter {
@@ -155,27 +226,33 @@ private struct Parameter {
     let defaultValue: String?
 }
 
-private let reservedNames: Set<String> = ["describe", "invoke"]
+private let reservedNames: Set<String> = ["describe", "invoke", "read"]
 
 private func collectActions(in actor: ActorDeclSyntax, context: some MacroExpansionContext) -> [Action] {
     var actions: [Action] = []
-    var seen: Set<String> = []
+    var groupCounter = 0
+    let members = conditionalMembers(actor.memberBlock.members, nextGroup: &groupCounter)
 
-    for member in actor.memberBlock.members {
+    for (member, condition, branches) in members {
         guard let function = member.decl.as(FunctionDeclSyntax.self),
             function.modifiers.contains(where: { $0.name.tokenKind == .keyword(.distributed) }),
             function.modifiers.contains(where: { $0.name.tokenKind == .keyword(.public) }),
-            !function.attributes.contains(where: { isAttribute($0, named: "DiscoveryIgnored") })
+            !function.attributes.contains(where: { isAttribute($0, named: "DiscoverableIgnored") })
         else { continue }
 
         let name = function.name.text
-        if reservedNames.contains(name) { continue }
+        if reservedNames.contains(name) {
+            context.diagnose(Diagnostic(node: function.name, message: DiscoveryDiagnostic.reserved(name)))
+            continue
+        }
 
         if function.genericParameterClause != nil {
             context.diagnose(Diagnostic(node: function.name, message: DiscoveryDiagnostic.generic(name)))
             continue
         }
-        if !seen.insert(name).inserted {
+        if actions.contains(where: {
+            $0.name == name && !mutuallyExclusive($0.branches, branches)
+        }) {
             context.diagnose(Diagnostic(node: function.name, message: DiscoveryDiagnostic.overloaded(name)))
             continue
         }
@@ -205,11 +282,84 @@ private func collectActions(in actor: ActorDeclSyntax, context: some MacroExpans
                 parameters: parameters,
                 isAsync: effects?.asyncSpecifier != nil,
                 isThrowing: effects?.throwsClause != nil,
-                returnsValue: returnType != nil && returnType != "Void" && returnType != "()"
+                resultType: returnType.flatMap { $0 == "Void" || $0 == "()" ? nil : $0 },
+                condition: condition,
+                branches: branches
             )
         )
     }
     return actions
+}
+
+private func collectProperties(in actor: ActorDeclSyntax) -> [Property] {
+    var groupCounter = 0
+    let members = conditionalMembers(actor.memberBlock.members, nextGroup: &groupCounter)
+    return members.flatMap { member, condition, branches -> [Property] in
+        guard let variable = member.decl.as(VariableDeclSyntax.self),
+            variable.modifiers.contains(where: { $0.name.tokenKind == .keyword(.public) }),
+            variable.modifiers.contains(where: { $0.name.tokenKind == .keyword(.distributed) }),
+            !variable.attributes.contains(where: { isAttribute($0, named: "DiscoverableIgnored") })
+        else { return [] }
+
+        let description = Documentation(variable.leadingTrivia).summary
+        return variable.bindings.compactMap { binding in
+            guard let pattern = binding.pattern.as(IdentifierPatternSyntax.self)
+            else { return nil }
+            return Property(
+                name: pattern.identifier.text,
+                type: binding.typeAnnotation?.type.trimmedDescription,
+                description: description,
+                condition: condition,
+                branches: branches
+            )
+        }
+    }
+}
+
+private func conditionalMembers(
+    _ members: MemberBlockItemListSyntax,
+    conditions: [String] = [],
+    branches: [ConditionalBranch] = [],
+    nextGroup: inout Int
+) -> [(MemberBlockItemSyntax, String?, [ConditionalBranch])] {
+    var result: [(MemberBlockItemSyntax, String?, [ConditionalBranch])] = []
+    for member in members {
+        guard let conditional = member.decl.as(IfConfigDeclSyntax.self) else {
+            result.append((member, conditions.isEmpty ? nil : conditions.joined(separator: " && "), branches))
+            continue
+        }
+        let group = nextGroup
+        nextGroup += 1
+        var priorConditions: [String] = []
+        for (index, clause) in conditional.clauses.enumerated() {
+            guard case .decls(let declarations)? = clause.elements else { continue }
+            let current: String
+            if clause.poundKeyword.text == "#else" {
+                current = priorConditions.map { "!(\($0))" }.joined(separator: " && ")
+            } else {
+                guard let expression = clause.condition?.trimmedDescription else { return [] }
+                let prefix = priorConditions.map { "!(\($0))" }
+                current = (prefix + ["(\(expression))"]).joined(separator: " && ")
+                priorConditions.append(expression)
+            }
+            result += conditionalMembers(
+                declarations,
+                conditions: conditions + [current],
+                branches: branches + [ConditionalBranch(group: group, clause: index)],
+                nextGroup: &nextGroup
+            )
+        }
+    }
+    return result
+}
+
+private func mutuallyExclusive(_ lhs: [ConditionalBranch], _ rhs: [ConditionalBranch]) -> Bool {
+    lhs.contains { left in rhs.contains { right in left.group == right.group && left.clause != right.clause } }
+}
+
+private func conditional(_ condition: String?, around source: String) -> String {
+    guard let condition else { return source }
+    return "#if \(condition)\n\(source)\n#endif"
 }
 
 private func isAttribute(_ element: AttributeListSyntax.Element, named name: String) -> Bool {
@@ -287,15 +437,17 @@ private enum DiscoveryDiagnostic: DiagnosticMessage {
     case notDistributedActor
     case generic(String)
     case overloaded(String)
+    case reserved(String)
 
     var message: String {
         switch self {
         case .notDistributedActor:
             "@Discoverable can only be applied to a distributed actor"
         case .generic(let name):
-            "'\(name)' is generic and can't be discovered; mark it @DiscoveryIgnored"
+            "'\(name)' is generic and can't be discovered; mark it @DiscoverableIgnored"
         case .overloaded(let name):
-            "'\(name)' is overloaded; action names must be unique, so mark one @DiscoveryIgnored"
+            "'\(name)' is overloaded; action names must be unique, so mark one @DiscoverableIgnored"
+        case .reserved(let name): "'\(name)' is reserved for a generated DiscoverableActors operation"
         }
     }
 
@@ -304,13 +456,40 @@ private enum DiscoveryDiagnostic: DiagnosticMessage {
         case .notDistributedActor: MessageID(domain: "DiscoverableActors", id: "notDistributedActor")
         case .generic: MessageID(domain: "DiscoverableActors", id: "generic")
         case .overloaded: MessageID(domain: "DiscoverableActors", id: "overloaded")
+        case .reserved: MessageID(domain: "DiscoverableActors", id: "reserved")
         }
     }
 
     var severity: DiagnosticSeverity {
         switch self {
         case .notDistributedActor: .error
-        case .generic, .overloaded: .warning
+        case .generic: .warning
+        case .overloaded: .error
+        case .reserved: .error
         }
     }
+}
+
+private enum DiscoveryIgnoredDiagnostic: DiagnosticMessage {
+    case notDistributedProperty(String)
+    case notDistributedMethod(String)
+    case unsupportedDeclaration
+
+    var message: String {
+        switch self {
+        case .notDistributedProperty(let name): "property '\(name)' is not distributed"
+        case .notDistributedMethod(let name): "method '\(name)' is not distributed"
+        case .unsupportedDeclaration: "@DiscoverableIgnored can only be applied to distributed methods or properties"
+        }
+    }
+
+    var diagnosticID: MessageID {
+        switch self {
+        case .notDistributedProperty: MessageID(domain: "DiscoverableActors", id: "ignoredNotDistributedProperty")
+        case .notDistributedMethod: MessageID(domain: "DiscoverableActors", id: "ignoredNotDistributedMethod")
+        case .unsupportedDeclaration: MessageID(domain: "DiscoverableActors", id: "ignoredUnsupportedDeclaration")
+        }
+    }
+
+    var severity: DiagnosticSeverity { .error }
 }
