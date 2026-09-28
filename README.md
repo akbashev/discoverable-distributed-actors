@@ -50,6 +50,33 @@ let result = try await list.invoke("list", arguments: nil)
 let items = try result.decode([String].self)
 ```
 
+For the example above, `object` contains this information (shown conceptually):
+
+```swift
+ObjectDescription(
+    kind: "TodoList",
+    summary: "A list of things to do.",
+    actions: [
+        ObjectAction(
+            name: "add",
+            summary: "Add an item.",
+            arguments: [
+                "type": "object",
+                "properties": [
+                    "title": [
+                        "type": "string",
+                        "description": "The item text."
+                    ]
+                ],
+                "required": ["title"],
+                "additionalProperties": false
+            ]
+        ),
+        ObjectAction(name: "list", summary: "List all items.", arguments: nil)
+    ]
+)
+```
+
 For callers that do not know the concrete actor type, resolve the generated `DiscoverableActor` reference from its distributed ID:
 
 ```swift
