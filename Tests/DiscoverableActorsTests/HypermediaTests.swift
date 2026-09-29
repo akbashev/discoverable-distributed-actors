@@ -75,19 +75,15 @@ struct HypermediaTests {
 
         let addOutput = try #require(actions["add"]?.output)
         #expect(
-            addOutput["properties"]?["actor"] == ["type": "object", "properties": ["id": [:]], "required": ["id"]])
+            addOutput == [
+                "type": "object", "properties": ["id": [:]], "required": ["id"], "x-actor-reference": true,
+            ])
 
-        guard case .actor(let added) = try await shelf.invoke("add", arguments: nil) else {
-            Issue.record("Expected an actor reference")
-            return
-        }
+        let added = try await shelf.invoke("add", arguments: nil).decode(ActorReference.self)
         let box = try Box.resolve(id: added.actorID(using: system), using: system)
         #expect(try await box.describe().title == "Box")
 
-        guard case .actor(let newest) = try await shelf.invoke("newest", arguments: nil) else {
-            Issue.record("Expected an actor reference")
-            return
-        }
+        let newest = try await shelf.invoke("newest", arguments: nil).decode(ActorReference.self)
         #expect(try newest.actorID(using: system) == box.id)
     }
 
@@ -108,7 +104,7 @@ struct HypermediaTests {
         let stocked = try await shelf.describe().actions
         #expect(Set(stocked.keys) == ["add", "count", "drawer", "newest", "clear"])
 
-        #expect(try await shelf.invoke("clear", arguments: nil) == .json(nil))
+        #expect(try await shelf.invoke("clear", arguments: nil) == .null)
         #expect(try await shelf.describe().actions["clear"] == nil)
     }
 

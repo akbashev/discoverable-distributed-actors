@@ -55,9 +55,10 @@ where ActorSystem: DistributedActorSystem<any Codable> {
     /// A Thing Description subset for this actor.
     distributed func describe() async throws -> ObjectDescription
 
-    /// Runs the named action with arguments matching its schema and returns JSON data or an actor reference.
+    /// Runs the named action with arguments matching its schema and returns its result as JSON.
+    /// Actors in the result, including a returned actor, are references: `{"id": …}`.
     @discardableResult
-    distributed func invoke(_ action: String, arguments: JSONValue) async throws -> ActionResult
+    distributed func invoke(_ action: String, arguments: JSONValue) async throws -> JSONValue
 
     /// Reads the named distributed property.
     distributed func read(property name: String) async throws -> JSONValue
@@ -66,8 +67,21 @@ where ActorSystem: DistributedActorSystem<any Codable> {
 extension DiscoverableActor {
     /// Runs the named action without arguments.
     @discardableResult
-    public nonisolated func invoke(_ action: String) async throws -> ActionResult {
+    public nonisolated func invoke(_ action: String) async throws -> JSONValue {
         try await invoke(action, arguments: nil)
+    }
+
+    /// Runs the named action and decodes its result as `type`.
+    ///
+    /// Distributed actors in the result, whether returned directly or inside a value,
+    /// are resolved with this actor's system.
+    public nonisolated func invoke<Value: Decodable>(
+        _ action: String,
+        arguments: JSONValue = nil,
+        as type: Value.Type = Value.self
+    ) async throws -> Value {
+        let json = try await invoke(action, arguments: arguments)
+        return try JSONValueDecoder(actorSystem: actorSystem).decode(type, from: json)
     }
 }
 
@@ -179,55 +193,6 @@ extension JSONValue {
     }
 }
 
-/// A dynamic action result containing either JSON data or another actor.
-public enum ActionResult: Codable, Sendable, Equatable {
-    case json(JSONValue)
-    case actor(ActorReference)
-
-    private enum CodingKeys: String, CodingKey {
-        case json
-        case actor
-    }
-
-    public init(from decoder: any Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        guard container.allKeys.count == 1 else {
-            throw DecodingError.dataCorruptedError(
-                forKey: .json,
-                in: container,
-                debugDescription: "Expected exactly one action result value."
-            )
-        }
-        if container.contains(.json) {
-            self = .json(try container.decode(JSONValue.self, forKey: .json))
-        } else if container.contains(.actor) {
-            self = .actor(try container.decode(ActorReference.self, forKey: .actor))
-        } else {
-            throw DecodingError.dataCorruptedError(
-                forKey: .json,
-                in: container,
-                debugDescription: "Expected an action result with a 'json' or 'actor' value."
-            )
-        }
-    }
-
-    public func encode(to encoder: any Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        switch self {
-        case .json(let value): try container.encode(value, forKey: .json)
-        case .actor(let reference): try container.encode(reference, forKey: .actor)
-        }
-    }
-
-    /// Decodes a JSON result. Throws if this result is an actor reference.
-    public func decode<Value: Decodable>(_ type: Value.Type = Value.self) throws -> Value {
-        guard case .json(let value) = self else {
-            throw DiscoveryError.invalidActionResult
-        }
-        return try value.decode(type)
-    }
-}
-
 public enum DiscoveryError: Error, Codable, Equatable, Sendable {
     case unknownAction(String)
     /// The action exists but isn't available in the actor's current state.
@@ -239,6 +204,4 @@ public enum DiscoveryError: Error, Codable, Equatable, Sendable {
     /// such as `expected integer, got string`. `name` is `arguments` when the
     /// arguments as a whole aren't a JSON object.
     case invalidArgument(name: String, reason: String)
-    case invalidActorReference
-    case invalidActionResult
 }

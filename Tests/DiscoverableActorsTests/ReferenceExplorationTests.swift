@@ -164,7 +164,7 @@ struct ReferenceExplorationTests {
             let value = try await stage("invoke system-bound boxed reference") {
                 try await returned.invoke("increment", arguments: ["amount": 3])
             }
-            #expect(value == .json(3))
+            #expect(value == 3)
         }
     }
 
@@ -245,7 +245,7 @@ struct ReferenceExplorationTests {
             let value = try await stage("invoke boxed reference") {
                 try await returned.invoke("increment", arguments: ["amount": 3])
             }
-            #expect(value == .json(3))
+            #expect(value == 3)
         }
     }
 

@@ -81,7 +81,7 @@ private func structSchema(_ structure: StructDeclSyntax, context: some MacroExpa
 
     let description = Documentation(structure.leadingTrivia).summary
     return """
-        DiscoverableActors.Discovery.objectSchema(
+        DiscoverableActors._DiscoverySupport.objectSchema(
             description: \(literal(description)),
             fields: [\(fields.joined(separator: ",\n"))]
         )
@@ -152,7 +152,7 @@ private func enumSchema(_ enumeration: EnumDeclSyntax) -> String {
             return "(value: \(value), description: \(literal(description)))"
         }
         return """
-            DiscoverableActors.Discovery.enumSchema(
+            DiscoverableActors._DiscoverySupport.enumSchema(
                 description: \(literal(description)),
                 cases: [\(values.joined(separator: ",\n"))]
             )
@@ -169,7 +169,7 @@ private func enumSchema(_ enumeration: EnumDeclSyntax) -> String {
             "(name: \(literal(unescaped(element.name))), description: \(literal(caseDescription)), fields: [\(fields.joined(separator: ", "))])"
     }
     return """
-        DiscoverableActors.Discovery.taggedSchema(
+        DiscoverableActors._DiscoverySupport.taggedSchema(
             description: \(literal(description)),
             cases: [\(tagged.joined(separator: ",\n"))]
         )

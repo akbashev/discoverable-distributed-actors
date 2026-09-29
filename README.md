@@ -4,7 +4,7 @@ Swift distributed actors that can explain themselves.
 
 Add `@Discoverable` to a distributed actor, and any caller holding its ID can ask what the actor offers and use it, without importing its Swift type. That caller might be another service, a generic client, or an LLM agent. The actor describes its properties and actions with JSON Schemas built from your signatures and doc comments, runs actions by name with JSON arguments, and links to other actors in its results, so a caller can move from one actor to the next.
 
-The description follows the shape of the [W3C Thing Description](https://www.w3.org/TR/wot-thing-description11/): a `title` and `description`, read-only `properties`, and `actions` with `input` and `output` schemas and `safe` and `idempotent` flags, all with the same meaning as there. It isn't a valid Thing Description, though. It has no `forms`, `security`, or `@context`, because every action is reached through `invoke` on the actor system; it has no events; its schemas are JSON Schema; and action outputs use this package's own result envelope.
+The description follows the shape of the [W3C Thing Description](https://www.w3.org/TR/wot-thing-description11/): a `title` and `description`, read-only `properties`, and `actions` with `input` and `output` schemas and `safe` and `idempotent` flags, all with the same meaning as there. It isn't a valid Thing Description, though. It has no `forms`, `security`, or `@context`, because every action is reached through `invoke` on the actor system; it has no events; and its schemas are JSON Schema.
 
 ## Installation
 
@@ -94,9 +94,7 @@ let room = try $DiscoverableActor<ClusterSystem>.resolve(id: roomID, using: syst
 try await user.invoke("join", arguments: ["room": .reference(to: room)])
 
 // An actor as a result: a link to follow.
-guard case .actor(let link) = try await room.invoke("member", arguments: ["name": "Ada"]) else {
-    throw DiscoveryError.invalidActionResult
-}
+let link = try await room.invoke("member", arguments: ["name": "Ada"]).decode(ActorReference.self)
 let member = try link.resolve(using: system)
 let info = try await member.read(property: "info")  // {"name": "Ada", "bio": "Writes programs."}
 ```
@@ -127,16 +125,26 @@ let info = try await member.read(property: "info")  // {"name": "Ada", "bio": "W
 }
 ```
 
-## Results and links
+## Results and references
 
-`invoke` returns an `ActionResult`:
+`invoke` returns the result as JSON. `Void` actions return `null`. A returned actor, and any actor inside a result, is a reference, `{"id": …}`, and its schema is marked `"x-actor-reference": true` so a caller can tell it apart from data. To follow one, decode it as an `ActorReference` and resolve it:
 
-- `.json(JSONValue)` for ordinary values. `Void` actions return `.json(null)`. Decode with `result.decode(MyType.self)`.
-- `.actor(ActorReference)` when the action returns another discoverable actor, directly or as an optional. The reference holds the actor's ID, `{"id": …}`, and `reference.resolve(using: system)` turns it back into an actor.
+```swift
+let link = try result.decode(ActorReference.self)
+let member = try link.resolve(using: system)
+```
 
 Actions without arguments can be called without `arguments:`, as in `invoke("refresh")`, and the result can be ignored without `_ =`.
 
-An action can also take a distributed actor as an argument, like `join(_:)` above. The caller passes a reference, `{"id": …}`: `.reference(to: actor)` for an actor it holds, or a reference it got from a result, which already encodes that way. The receiving actor resolves it with its own actor system. Actors inside arrays and string-keyed dictionaries work the same way, in both directions: `[Room]` is passed and returned as an array of `{"id": …}` references. An actor that isn't discoverable is returned as such a reference inside `.json`, since a caller can pass it on but can't describe it. Anything else is rejected with `DiscoveryError.invalidArgument`, which says where the bad reference is.
+A caller that knows the result's type can decode it directly, actors included:
+
+```swift
+let member = try await room.invoke("member", arguments: ["name": "Ada"], as: User?.self)
+```
+
+Actors in the result, returned directly or inside a value, are resolved with the caller's actor system. `result.decode(_:)` is for plain data, and explains the problem if it meets an actor.
+
+An action can also take a distributed actor as an argument, like `join(_:)` above. The caller passes a reference, `{"id": …}`: `.reference(to: actor)` for an actor it holds, or a reference it got from a result, which already encodes that way. The receiving actor resolves it with its own actor system. Actors anywhere inside an argument or result work the same way, in both directions: `[Room]` is an array of `{"id": …}` references, and so is a `Room` field in a structure. An actor that isn't discoverable is returned the same way: a caller can pass it on, but can't describe it. Anything else is rejected with `DiscoveryError.invalidArgument`, which says where the bad reference is.
 
 A reference points at one incarnation of an actor on one node, and stops resolving when that actor stops. References are for using now: when you need the actor again later, call the action that returned it again.
 
@@ -249,12 +257,12 @@ Parameters with default values aren't required: omitting one uses the default, w
 - Declarations inside `#if` blocks are discovered under the same conditions.
 - The macro reports an error for overloaded action names and for methods named `describe`, `invoke`, or `read`, and a warning for generic methods, which can't be discovered.
 
-`invoke` and `read` report problems as `DiscoveryError` values: unknown or unavailable actions, unknown properties, missing or unexpected arguments, and invalid results or references. An argument that doesn't match its schema throws `invalidArgument(name:reason:)`, with a reason in JSON terms, such as `expected integer, got string at authors[0].born`. That matters most for callers such as LLMs, which can correct the argument and retry, and it reaches remote callers intact, unlike a Swift `DecodingError`, which actor systems can't send back.
+`invoke` and `read` report problems as `DiscoveryError` values: unknown or unavailable actions, unknown properties, and missing or unexpected arguments. An argument that doesn't match its schema throws `invalidArgument(name:reason:)`, with a reason in JSON terms, such as `expected integer, got string at authors[0].born`. That matters most for callers such as LLMs, which can correct the argument and retry, and it reaches remote callers intact, unlike a Swift `DecodingError`, which actor systems can't send back.
 
 ## Limitations
 
 - Actor systems must use `any Codable` serialization, and returned actors need `Codable` IDs. See [docs/actor-systems.md](docs/actor-systems.md).
-- Only a discoverable actor returned directly, or as an optional, is an `.actor` link. Actors in arrays and dictionaries are `{"id": …}` references inside `.json`, and actors stored in structure fields aren't supported: their schema is `{}`.
+- A structure containing an actor is only described if it's marked `@JSONSchema`, since inference can't create a placeholder actor. Its value still uses references.
 - `invoke` can't return `$DiscoverableActor` directly because of a Swift runtime issue; see [docs/actor-reference-exploration.md](docs/actor-reference-exploration.md).
 - There are no events or subscriptions yet.
 

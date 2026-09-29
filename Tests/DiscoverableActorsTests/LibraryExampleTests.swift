@@ -145,7 +145,7 @@ struct LibraryExampleTests {
             //        {"isbn": "978-2", "title": "The Swift Programming Language", "available": 2}])
 
             let result = try await library.invoke("lend", arguments: ["isbn": "978-1", "card": "C-1024"])
-            guard case .actor(let link) = result else { throw DiscoveryError.invalidActionResult }
+            let link = try result.decode(ActorReference.self)
             let loan = try link.resolve(using: system)
 
             let due = try await loan.read(property: "due")  // "2026-10-13T10:15:00Z"
@@ -171,7 +171,7 @@ struct LibraryExampleTests {
                 ])
             #expect(try due.decode(String.self).hasPrefix("20"))
             #expect(offered == ["giveBack", "library"])
-            guard case .actor(let up) = back else { throw DiscoveryError.invalidActionResult }
+            let up = try back.decode(ActorReference.self)
             #expect(try await up.resolve(using: system).describe().title == "Library")
 
             let afterReturn = try await library.invoke("search", arguments: ["title": "concurrency"])

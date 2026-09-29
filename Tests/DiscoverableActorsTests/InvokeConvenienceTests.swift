@@ -12,7 +12,7 @@ struct InvokeConvenienceTests {
 
         // No `arguments:` and no `_ =`, on the concrete type.
         try await page.invoke("append", arguments: ["item": "b"])
-        #expect(try await page.invoke("this") != .json(nil))
+        #expect(try await page.invoke("this") != .null)
         #expect(try await page.read(property: "count") == 2)
     }
 
@@ -24,7 +24,7 @@ struct InvokeConvenienceTests {
 
             try await object.invoke("increment", arguments: ["amount": 2])
             try await object.invoke("reset")
-            #expect(try await object.invoke("increment", arguments: ["amount": 1]) == .json(1))
+            #expect(try await object.invoke("increment", arguments: ["amount": 1]) == 1)
         }
     }
 }

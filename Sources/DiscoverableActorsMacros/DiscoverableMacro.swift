@@ -101,12 +101,12 @@ public struct DiscoverableMacro: MemberMacro, ExtensionMacro {
             }
             let output =
                 action.resultType.map {
-                    "DiscoverableActors.Discovery.resultSchema(for: \($0).self)"
+                    "DiscoverableActors.Discovery.schema(for: \($0).self)"
                 } ?? "nil"
             let assignment = """
                 actions[\(literal(action.key))] = DiscoverableActors.ObjectAction(
                     description: \(literal(action.summary)),
-                    input: DiscoverableActors.Discovery.schema(
+                    input: DiscoverableActors._DiscoverySupport.schema(
                         description: \(literal(action.summary)),
                         parameters: [\(parameters.joined(separator: ", "))]
                     ),
@@ -123,7 +123,7 @@ public struct DiscoverableMacro: MemberMacro, ExtensionMacro {
         let propertyStatements = properties.map { property in
             let schema =
                 property.type.map {
-                    "DiscoverableActors.Discovery.propertySchema(for: \($0).self, description: \(literal(property.description)))"
+                    "DiscoverableActors._DiscoverySupport.propertySchema(for: \($0).self, description: \(literal(property.description)))"
                 } ?? "[:]"
             return conditional(property.condition, around: "properties[\(literal(property.key))] = \(schema)")
         }
@@ -155,14 +155,15 @@ public struct DiscoverableMacro: MemberMacro, ExtensionMacro {
 
         let cases = actions.map { action in
             let allowedKeys = action.parameters.map { literal($0.key) }.joined(separator: ", ")
-            let validation = "try DiscoverableActors.Discovery.validate(arguments, allowedKeys: [\(allowedKeys)])"
+            let validation =
+                "try DiscoverableActors._DiscoverySupport.validate(arguments, allowedKeys: [\(allowedKeys)])"
             let callArguments = action.parameters.map { parameter in
                 let reader = parameter.isOptional ? "optionalArgument" : "argument"
                 let decoded =
-                    "try DiscoverableActors.Discovery.\(reader)(\(parameter.valueType).self, \(literal(parameter.key)), in: arguments, actorSystem: self.actorSystem)"
+                    "try DiscoverableActors._DiscoverySupport.\(reader)(\(parameter.valueType).self, \(literal(parameter.key)), in: arguments, actorSystem: self.actorSystem)"
                 let value =
                     parameter.defaultValue.map {
-                        "try DiscoverableActors.Discovery.defaultedArgument(\(parameter.declaredType).self, \(literal(parameter.key)), in: arguments, actorSystem: self.actorSystem, default: (\($0)))"
+                        "try DiscoverableActors._DiscoverySupport.defaultedArgument(\(parameter.declaredType).self, \(literal(parameter.key)), in: arguments, actorSystem: self.actorSystem, default: (\($0)))"
                     } ?? decoded
                 return parameter.label.map { "\($0): \(value)" } ?? value
             }
@@ -170,8 +171,8 @@ public struct DiscoverableMacro: MemberMacro, ExtensionMacro {
                 "\(action.isThrowing ? "try " : "")\(action.isAsync ? "await " : "")self.\(action.name)(\(callArguments.joined(separator: ", ")))"
             let body =
                 action.returnsValue
-                ? "return try DiscoverableActors.Discovery.result(\(call), actorSystem: ActorSystem.self)"
-                : "\(call)\nreturn .json(.null)"
+                ? "return try DiscoverableActors._DiscoverySupport.json(\(call))"
+                : "\(call)\nreturn nil"
             let availability = action.availability.map {
                 "guard (\($0)) else { throw DiscoverableActors.DiscoveryError.unavailableAction(\(literal(action.key))) }\n"
             }
@@ -186,7 +187,7 @@ public struct DiscoverableMacro: MemberMacro, ExtensionMacro {
             public distributed func invoke(
                 _ action: String,
                 arguments: DiscoverableActors.JSONValue
-            ) async throws -> DiscoverableActors.ActionResult {
+            ) async throws -> DiscoverableActors.JSONValue {
                 switch action {
                 \(raw: cases.joined(separator: "\n"))
                 default:
@@ -200,7 +201,7 @@ public struct DiscoverableMacro: MemberMacro, ExtensionMacro {
             conditional(
                 property.condition,
                 around:
-                    "case \(literal(property.key)): return try DiscoverableActors.Discovery.propertyValue(self.\(property.name))"
+                    "case \(literal(property.key)): return try DiscoverableActors._DiscoverySupport.json(self.\(property.name))"
             )
         }
         let readProperty: DeclSyntax = """

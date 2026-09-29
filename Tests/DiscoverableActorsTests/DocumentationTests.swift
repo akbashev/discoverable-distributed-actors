@@ -96,7 +96,7 @@ struct DocumentationTests {
         #expect(action.output == nil)
         #expect(description.properties["static"]?["type"] == "integer")
 
-        #expect(try await tally.invoke("default", arguments: ["for": 1]) == .json(nil))
+        #expect(try await tally.invoke("default", arguments: ["for": 1]) == .null)
         #expect(try await tally.read(property: "static") == 1)
     }
 
@@ -107,13 +107,10 @@ struct DocumentationTests {
             Issue.record("Expected an actor or null result schema, got \(output)")
             return
         }
-        #expect(options[0]["required"] == ["actor"])
-        #expect(options[1]["properties"]?["json"] == ["type": "null"])
+        #expect(options[0]["required"] == ["id"])
+        #expect(options[1] == ["type": "null"])
 
-        guard case .actor = try await tally.invoke("maybe", arguments: ["present": true]) else {
-            Issue.record("Expected an actor reference")
-            return
-        }
-        #expect(try await tally.invoke("maybe", arguments: ["present": false]) == .json(nil))
+        #expect(try await tally.invoke("maybe", arguments: ["present": true])["id"] != nil)
+        #expect(try await tally.invoke("maybe", arguments: ["present": false]) == .null)
     }
 }

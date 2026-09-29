@@ -69,11 +69,11 @@ struct ActorCollectionTests {
 
         let count = try await pallet.invoke(
             "stack", arguments: ["boxes": [.reference(to: first), .reference(to: second)]])
-        #expect(count == .json(2))
+        #expect(count == 2)
 
         let labels = try await pallet.invoke(
             "label", arguments: ["boxes": ["fragile": .reference(to: first), "heavy": .reference(to: second)]])
-        #expect(labels == .json(["fragile", "heavy"]))
+        #expect(labels == ["fragile", "heavy"])
         withExtendedLifetime((first, second)) {}
     }
 
@@ -84,9 +84,9 @@ struct ActorCollectionTests {
         try await pallet.invoke("stack", arguments: ["boxes": [.reference(to: box)]])
 
         let boxes = try await pallet.invoke("boxes")
-        #expect(boxes == .json([try .reference(to: box)]))
+        #expect(boxes == [try .reference(to: box)])
         #expect(
-            try await pallet.describe().actions["boxes"]?.output?["properties"]?["json"]?["items"]?["required"] == [
+            try await pallet.describe().actions["boxes"]?.output?["items"]?["required"] == [
                 "id"
             ])
         withExtendedLifetime(box) {}
@@ -102,11 +102,11 @@ struct ActorCollectionTests {
         #expect(load == [try .reference(to: box)])
         #expect(try await pallet.describe().properties["load"]?["items"]?["required"] == ["id"])
         // A value read from a property can be passed straight back as an argument.
-        #expect(try await pallet.invoke("stack", arguments: ["boxes": load]) == .json(2))
+        #expect(try await pallet.invoke("stack", arguments: ["boxes": load]) == 2)
 
         let key = try await pallet.read(property: "key")
         #expect(key["id"] != nil)
-        #expect(try await pallet.invoke("verify", arguments: ["token": key]) == .json(true))
+        #expect(try await pallet.invoke("verify", arguments: ["token": key]) == true)
         withExtendedLifetime(box) {}
     }
 
@@ -114,14 +114,10 @@ struct ActorCollectionTests {
     func returnsActorsThatArentDiscoverableAsReferencesInJSON() async throws {
         let pallet = Pallet(actorSystem: system)
 
-        // Not a link, since the caller couldn't describe it, but a reference it can pass on.
-        let result = try await pallet.invoke("accessToken")
-        guard case .json(let reference) = result else {
-            Issue.record("Expected JSON, got \(result)")
-            return
-        }
+        // The caller can't describe it, but it's a reference it can pass on.
+        let reference = try await pallet.invoke("accessToken")
         #expect(reference["id"] != nil)
-        #expect(try await pallet.invoke("verify", arguments: ["token": reference]) == .json(true))
+        #expect(try await pallet.invoke("verify", arguments: ["token": reference]) == true)
     }
 
     @Test

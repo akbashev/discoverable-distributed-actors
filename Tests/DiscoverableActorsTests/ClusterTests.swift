@@ -98,7 +98,7 @@ struct ClusterTests {
         let object = try $DiscoverableActor<ClusterSystem>.resolve(id: counter.id, using: system)
 
         #expect(try await object.describe().title == "Counter")
-        #expect(try await object.invoke("increment", arguments: ["amount": 2]) == .json(2))
+        #expect(try await object.invoke("increment", arguments: ["amount": 2]) == 2)
     }
 
     @Test
@@ -114,9 +114,9 @@ struct ClusterTests {
                 description.actions["increment"]?.input?["properties"]?["amount"]?["description"] == "How much to add.")
             #expect(description.properties["count"]?["type"] == "integer")
             #expect(try await object.read(property: "count") == 0)
-            #expect(try await object.invoke("increment", arguments: ["amount": 5]) == .json(5))
+            #expect(try await object.invoke("increment", arguments: ["amount": 5]) == 5)
             #expect(try await object.read(property: "count") == 5)
-            #expect(try await object.invoke("increment", arguments: ["amount": 1]) == .json(6))
+            #expect(try await object.invoke("increment", arguments: ["amount": 1]) == 6)
         }
     }
 
@@ -128,17 +128,13 @@ struct ClusterTests {
             let root = try $DiscoverableActor<ClusterSystem>.resolve(id: directory.id, using: second)
 
             let description = try await root.describe()
-            #expect(description.actions["counterActor"]?.output?["properties"]?["actor"] != nil)
+            #expect(description.actions["counterActor"]?.output?["x-actor-reference"] == true)
 
-            let result = try await root.invoke("counterActor", arguments: nil)
-            guard case .actor(let reference) = result else {
-                Issue.record("Expected an actor reference")
-                return
-            }
+            let reference = try await root.invoke("counterActor", arguments: nil).decode(ActorReference.self)
             let child = try reference.resolve(using: second)
 
             #expect(try await child.describe().title == "Counter")
-            #expect(try await child.invoke("increment", arguments: ["amount": 4]) == .json(4))
+            #expect(try await child.invoke("increment", arguments: ["amount": 4]) == 4)
         }
     }
 
@@ -149,8 +145,8 @@ struct ClusterTests {
             let object = try $DiscoverableActor<ClusterSystem>.resolve(id: counter.id, using: second)
 
             _ = try await object.invoke("increment", arguments: ["amount": 5])
-            #expect(try await object.invoke("reset", arguments: nil) == .json(nil))
-            #expect(try await object.invoke("increment", arguments: ["amount": 1]) == .json(1))
+            #expect(try await object.invoke("reset", arguments: nil) == .null)
+            #expect(try await object.invoke("increment", arguments: ["amount": 1]) == 1)
         }
     }
 

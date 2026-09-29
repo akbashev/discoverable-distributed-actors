@@ -80,9 +80,7 @@ struct QuickStartTests {
             try await user.invoke("join", arguments: ["room": .reference(to: room)])
 
             // An actor as a result: a link to follow.
-            guard case .actor(let link) = try await room.invoke("member", arguments: ["name": "Ada"]) else {
-                throw DiscoveryError.invalidActionResult
-            }
+            let link = try await room.invoke("member", arguments: ["name": "Ada"]).decode(ActorReference.self)
             let member = try link.resolve(using: system)
             let info = try await member.read(property: "info")  // {"name": "Ada", "bio": "Writes programs."}
             // --- README ---
@@ -105,13 +103,18 @@ struct QuickStartTests {
                     ],
                     "required": ["name"],
                 ])
-            #expect(try await room.invoke("member", arguments: ["name": "Grace"]) == .json(nil))
+            #expect(try await room.invoke("member", arguments: ["name": "Grace"]) == .null)
 
             await #expect(
                 throws: DiscoveryError.invalidArgument(name: "room", reason: #"expected object with "id", got string"#)
             ) {
                 try await user.invoke("join", arguments: ["room": "general"])
             }
+            // A typed caller can decode results directly, links included.
+            let found = try await room.invoke("member", arguments: ["name": "Ada"], as: User?.self)
+            #expect(try await found?.info.name == "Ada")
+            #expect(try await room.invoke("member", arguments: ["name": "Grace"], as: User?.self) == nil)
+
             withExtendedLifetime((ada, general)) {}
         }
     }

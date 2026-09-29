@@ -1,10 +1,10 @@
 # Actor systems
 
-`DiscoverableActor` requires an actor system whose serialization requirement is `any Codable`. A distributed method's argument and return types must satisfy the system's serialization requirement, so the protocol has to name one that `JSONValue` and `ActionResult` satisfy.
+`DiscoverableActor` requires an actor system whose serialization requirement is `any Codable`. A distributed method's argument and return types must satisfy the system's serialization requirement, so the protocol has to name one that `JSONValue` satisfies.
 
 ## Actor references
 
-An action that returns a discoverable actor produces an `ActorReference`, encoded as `{"id": …}`, holding the actor system's ID as `JSONValue`. The ID must be `Codable` and must round-trip through a plain `JSONEncoder` and `JSONDecoder`. Resolving the reference requires `System.ActorID: Decodable`; producing one checks at runtime that the ID is `Encodable` and throws `DiscoveryError.invalidActorReference` otherwise. `resolve(using:)` returns a `$DiscoverableActor`, and `actorID(using:)` returns the typed ID for resolving the actor as a concrete type.
+Actors in results, arguments, and properties are references, `{"id": …}`, holding the actor system's ID encoded as JSON. The ID must be `Codable`. Decoding a reference as `ActorReference` gives `resolve(using:)`, which returns a `$DiscoverableActor`, and `actorID(using:)`, which returns the typed ID for resolving the actor as a concrete type. `invoke(_:arguments:as:)` resolves actors in a result directly.
 
 A reference identifies one incarnation of an actor on one node, so it stops resolving when that actor stops or moves.
 

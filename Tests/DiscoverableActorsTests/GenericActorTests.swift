@@ -45,17 +45,14 @@ struct GenericActorTests {
         let description = try await page.describe()
 
         #expect(description.title == "Page")
-        #expect(description.actions["item"]?.output?["properties"]?["json"] == ["type": "string"])
+        #expect(description.actions["item"]?.output == ["type": "string"])
         #expect(description.actions["append"]?.input?["properties"]?["item"]?["type"] == "string")
 
         _ = try await page.invoke("append", arguments: ["item": "c"])
         #expect(try await page.read(property: "count") == 3)
-        #expect(try await page.invoke("item", arguments: ["index": 2]) == .json("c"))
+        #expect(try await page.invoke("item", arguments: ["index": 2]) == "c")
 
-        guard case .actor(let reference) = try await page.invoke("this", arguments: nil) else {
-            Issue.record("Expected an actor reference")
-            return
-        }
+        let reference = try await page.invoke("this", arguments: nil).decode(ActorReference.self)
         #expect(try reference.actorID(using: system) == page.id)
     }
 }

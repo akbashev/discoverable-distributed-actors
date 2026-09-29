@@ -60,26 +60,26 @@ public enum JSONValue: Codable, Sendable, Hashable {
 }
 
 extension JSONValue {
-    /// Converts any `Encodable` value through its JSON form.
+    /// Converts any `Encodable` value to JSON. Distributed actors inside it become
+    /// references, `{"id": …}`.
     public init<Value: Encodable>(encoding value: Value) throws {
-        let data = try JSONEncoder().encode(value)
-        self = try JSONDecoder().decode(JSONValue.self, from: data)
+        self = try JSONValueEncoder().encode(value)
     }
 
     /// Decodes a `Decodable` value from this JSON.
+    ///
+    /// For plain data. A value containing distributed actors needs an actor system to
+    /// resolve them; decode it with ``DiscoverableActor/invoke(_:arguments:as:)`` instead.
     public func decode<Value: Decodable>(_ type: Value.Type = Value.self) throws -> Value {
         try decode(type, actorSystem: nil)
     }
 
-    /// Decodes a value, giving distributed actors inside it an actor system to resolve with.
+    /// Decodes a value, resolving `{"id": …}` references to distributed actors with `actorSystem`.
     func decode<Value: Decodable>(
         _ type: Value.Type,
         actorSystem: (any DistributedActorSystem)?
     ) throws -> Value {
-        let data = try JSONEncoder().encode(self)
-        let decoder = JSONDecoder()
-        if let actorSystem { decoder.userInfo[.actorSystemKey] = actorSystem }
-        return try decoder.decode(type, from: data)
+        try JSONValueDecoder(actorSystem: actorSystem).decode(type, from: self)
     }
 
     /// The value at a coding path, such as the one in a `DecodingError`.

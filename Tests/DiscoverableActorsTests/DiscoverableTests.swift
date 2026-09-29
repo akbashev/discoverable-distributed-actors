@@ -105,7 +105,7 @@ struct DiscoverableTests {
         let add = try await action("add", of: list)
         #expect(add.description == "Add an item to the list.")
         #expect(try await action("list", of: list).input == nil)
-        #expect(try await action("list", of: list).output?["properties"]?["json"]?["type"] == "array")
+        #expect(try await action("list", of: list).output?["type"] == "array")
     }
 
     @Test
@@ -145,7 +145,7 @@ struct DiscoverableTests {
     func defaultArgumentsApplyOnlyWhenOmitted() async throws {
         let list = TodoList(actorSystem: system)
 
-        #expect(try await list.invoke("label", arguments: [:]) == .json("untitled"))
+        #expect(try await list.invoke("label", arguments: [:]) == "untitled")
         await #expect(throws: DiscoveryError.invalidArgument(name: "value", reason: "expected string, got null")) {
             try await list.invoke("label", arguments: ["value": nil])
         }
@@ -180,10 +180,10 @@ struct DiscoverableTests {
             ])
 
         let removed = try await list.invoke("remove", arguments: ["index": 0, "reason": nil])
-        #expect(removed == .json("Buy milk"))
+        #expect(removed == "Buy milk")
 
         let added = try await list.invoke("add", arguments: ["title": "Read"])
-        #expect(added == .json("Read"))
+        #expect(added == "Read")
     }
 
     @Test
