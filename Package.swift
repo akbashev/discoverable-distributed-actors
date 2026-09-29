@@ -20,8 +20,9 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/swiftlang/swift-syntax.git", "509.0.0"..<"605.0.0"),
-        // Tests only: a real multi-node actor system.
+        // Tests only: a real multi-node actor system, and its logging settings.
         .package(url: "https://github.com/apple/swift-distributed-actors.git", branch: "main"),
+        .package(url: "https://github.com/apple/swift-log", from: "1.0.0"),
     ],
     targets: [
         .macro(
@@ -48,6 +49,7 @@ let package = Package(
                 "DiscoverableActors",
                 "DiscoverableActorsMacros",
                 .product(name: "DistributedCluster", package: "swift-distributed-actors"),
+                .product(name: "Logging", package: "swift-log"),
                 .product(name: "SwiftParser", package: "swift-syntax"),
                 .product(name: "SwiftSyntax", package: "swift-syntax"),
                 .product(name: "SwiftSyntaxMacroExpansion", package: "swift-syntax"),
