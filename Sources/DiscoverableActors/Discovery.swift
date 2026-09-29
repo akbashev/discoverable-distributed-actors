@@ -103,22 +103,33 @@ public enum Discovery {
     ///
     /// - Parameter rel: The link relation of a returned actor.
     public static func resultSchema(for type: Any.Type, rel: String? = nil) -> JSONValue {
-        if type is any DiscoverableActor.Type {
-            return taggedResult("actor", referenceSchema(rel: rel))
+        if let reference = referenceSchema(for: type, rel: rel) {
+            return taggedResult("actor", reference)
         }
         // `result(_:actorSystem:rel:)` returns a present actor as a reference and `nil` as JSON null.
-        if let optional = type as? any _DiscoveryOptional.Type, optional.wrappedType is any DiscoverableActor.Type {
-            return [
-                "anyOf": [taggedResult("actor", referenceSchema(rel: rel)), taggedResult("json", ["type": "null"])]
-            ]
+        if let optional = type as? any _DiscoveryOptional.Type,
+            let reference = referenceSchema(for: optional.wrappedType, rel: rel)
+        {
+            return ["anyOf": [taggedResult("actor", reference), taggedResult("json", ["type": "null"])]]
         }
         return taggedResult("json", schema(for: type))
     }
 
-    private static func referenceSchema(rel: String?) -> JSONValue {
-        var properties: [String: JSONValue] = ["id": [:]]
+    /// The schema of the ``ActorReference`` returned for an ``ActorName`` or an actor; `nil` for other types.
+    private static func referenceSchema(for type: Any.Type, rel: String?) -> JSONValue? {
+        var properties: [String: JSONValue]
+        let required: JSONValue
+        if type == ActorName.self {
+            properties = ["href": ActorName.jsonSchema]
+            required = ["href"]
+        } else if type is any DiscoverableActor.Type {
+            properties = ["id": [:]]
+            required = ["id"]
+        } else {
+            return nil
+        }
         if let rel { properties["rel"] = ["const": .string(rel)] }
-        return ["type": "object", "properties": .object(properties)]
+        return ["type": "object", "properties": .object(properties), "required": required]
     }
 
     private static func taggedResult(_ kind: String, _ valueSchema: JSONValue) -> JSONValue {
@@ -143,13 +154,16 @@ public enum Discovery {
         actorSystem: System.Type,
         rel: String? = nil
     ) throws -> ActionResult {
+        if let name = value as? ActorName {
+            return .actor(ActorReference(rel: rel, target: .name(name)))
+        }
         if let actor = value as? any DiscoverableActor {
             guard actor.actorSystem is System,
                 let identifier = actor.id as? any Encodable
             else {
                 throw DiscoveryError.invalidActorReference
             }
-            return .actor(ActorReference(rel: rel, identifier: try JSONValue(encoding: identifier)))
+            return .actor(ActorReference(rel: rel, target: .incarnation(try JSONValue(encoding: identifier))))
         }
         return .json(try json(value))
     }

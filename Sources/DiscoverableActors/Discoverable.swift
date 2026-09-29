@@ -141,38 +141,123 @@ public struct ObjectAction: Codable, Sendable, Equatable {
     }
 }
 
-/// A link to another discoverable actor, returned by an action.
+/// A lasting name for a discoverable actor, such as `app://order/42`.
 ///
-/// Resolve it with an actor system compatible with the system that created the
-/// referenced actor.
+/// Return it from an action instead of the actor itself when the actor has a
+/// stable identity that outlives any one incarnation, such as a virtual actor.
+/// `invoke` turns it into an ``ActorReference``; the URI scheme, what a name means,
+/// and how to resolve it belong to the application.
+///
+/// Names encode as URI strings with any encoder. Their schema carries
+/// `"x-actor-name": true`, so callers can tell names apart from other URIs in
+/// results, optionals, arrays, and dictionaries. Structures are described only
+/// through ``JSONSchemaRepresentable``, so a structure with a name field carries
+/// the marker only if its own schema includes `ActorName.jsonSchema`.
+public struct ActorName: Codable, Sendable, Hashable, JSONSchemaRepresentable {
+    public let uri: URL
+
+    /// Creates a name from an absolute URI; `nil` if `uri` has no scheme.
+    public init?(_ uri: URL) {
+        guard uri.scheme != nil else { return nil }
+        self.uri = uri
+    }
+
+    /// Creates a name from an absolute URI string; `nil` if it isn't one.
+    public init?(string: String) {
+        guard let uri = URL(string: string) else { return nil }
+        self.init(uri)
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let string = try container.decode(String.self)
+        guard let name = ActorName(string: string) else {
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Expected an absolute URI, got '\(string)'."
+            )
+        }
+        self = name
+    }
+
+    /// Encodes the URI as a string, not `URL`'s own keyed representation.
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(uri.absoluteString)
+    }
+
+    public static var jsonSchema: JSONValue { ["type": "string", "format": "uri", "x-actor-name": true] }
+}
+
+/// A link to another discoverable actor, returned by an action.
 public struct ActorReference: Codable, Sendable, Equatable {
+    /// What the reference points at.
+    public enum Target: Sendable, Equatable {
+        /// One incarnation of an actor, identified by its actor system's `Codable` ID.
+        /// It stops resolving when that actor stops.
+        case incarnation(JSONValue)
+        /// A lasting name, resolved by the application.
+        case name(ActorName)
+    }
+
     /// How the referenced actor relates to the actor that returned it.
     public let rel: String?
-    /// The actor's `Codable` ID.
-    private let identifier: JSONValue
+    public let target: Target
 
     private enum CodingKeys: String, CodingKey {
-        case rel
-        case identifier = "id"
+        case rel, href, id
     }
 
-    init(rel: String?, identifier: JSONValue) {
+    public init(rel: String?, target: Target) {
         self.rel = rel
-        self.identifier = identifier
+        self.target = target
     }
 
-    /// Resolves this reference into a dynamically typed discoverable actor.
+    /// A reference to a name found in data, such as an element of an `[ActorName]` result.
+    public init(name: ActorName, rel: String? = nil) {
+        self.init(rel: rel, target: .name(name))
+    }
+
+    /// Decodes `{"rel", "href"}` for a name or `{"rel", "id"}` for an incarnation.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        rel = try container.decodeIfPresent(String.self, forKey: .rel)
+        switch (container.contains(.href), container.contains(.id)) {
+        case (true, false): target = .name(try container.decode(ActorName.self, forKey: .href))
+        case (false, true): target = .incarnation(try container.decode(JSONValue.self, forKey: .id))
+        default:
+            throw DecodingError.dataCorruptedError(
+                forKey: .href,
+                in: container,
+                debugDescription: "Expected exactly one of 'href' or 'id'."
+            )
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(rel, forKey: .rel)
+        switch target {
+        case .name(let name): try container.encode(name, forKey: .href)
+        case .incarnation(let id): try container.encode(id, forKey: .id)
+        }
+    }
+
+    /// Resolves a reference to an incarnation into a dynamically typed discoverable actor.
+    /// Throws ``DiscoveryError/invalidActorReference`` for a named reference.
     public func resolve<System: DistributedActorSystem<any Codable>>(
         using system: System
     ) throws -> $DiscoverableActor<System> where System.ActorID: Decodable {
         try $DiscoverableActor<System>.resolve(id: actorID(using: system), using: system)
     }
 
-    /// The referenced actor's ID in `system`, for resolving it as a concrete type.
+    /// The referenced incarnation's ID in `system`, for resolving it as a concrete type.
+    /// Throws ``DiscoveryError/invalidActorReference`` for a named reference.
     public func actorID<System: DistributedActorSystem>(
         using system: System
     ) throws -> System.ActorID where System.ActorID: Decodable {
-        try identifier.decode(System.ActorID.self)
+        guard case .incarnation(let id) = target else { throw DiscoveryError.invalidActorReference }
+        return try id.decode(System.ActorID.self)
     }
 }
 

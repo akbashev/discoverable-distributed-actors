@@ -107,7 +107,7 @@ let archivedSummary: TodoSummary = try archivedJSON.decode()
 
 `object` is an `ObjectDescription` containing the actor's title, description, property and action schemas, and links. Documentation comments supply descriptions, and `- Parameter` comments supply parameter descriptions.
 
-Actor methods keep their ordinary Swift signatures. Public distributed methods and read-only distributed properties appear in the description by default; use `@DiscoverableIgnored` to omit a distributed declaration. Local state stays private. The description follows the W3C Thing Description vocabulary, but this package implements only a subset and uses its own `ActionResult` envelope. Actor results are supported when returned directly or as an optional; nested actor references, such as arrays of actors, are not.
+Actor methods keep their ordinary Swift signatures. Public distributed methods and read-only distributed properties appear in the description by default; use `@DiscoverableIgnored` to omit a distributed declaration. Local state stays private. The description follows the W3C Thing Description vocabulary, but this package implements only a subset and uses its own `ActionResult` envelope. Actor results are supported when returned directly or as an optional; nested actor references, such as arrays of actors, are not. An action can also return an `ActorName`, a lasting URI such as `app://order/42` that the caller resolves in its own way, for actors like virtual actors that outlive any one incarnation.
 
 Types with richer schema information can conform to `JSONSchemaRepresentable`:
 

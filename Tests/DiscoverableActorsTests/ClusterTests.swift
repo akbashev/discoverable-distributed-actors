@@ -1,6 +1,7 @@
 import DiscoverableActors
 import Distributed
 import DistributedCluster
+import Foundation
 import Testing
 
 #if canImport(Darwin)
@@ -63,6 +64,12 @@ distributed actor CounterDirectory {
 
     public distributed func counterActor() -> Counter {
         counter
+    }
+
+    /// The counter's lasting name.
+    /// - Relation: counter
+    public distributed func counterName() -> ActorName {
+        ActorName(string: "counter://main")!
     }
 }
 
@@ -140,6 +147,31 @@ struct ClusterTests {
 
             #expect(try await child.describe().title == "Counter")
             #expect(try await child.invoke("increment", arguments: ["amount": 4]) == .json(4))
+        }
+    }
+
+    @Test
+    func resolvesNamedReferencesAcrossNodes() async throws {
+        try await withTwoNodes { first, second in
+            let counter = Counter(actorSystem: first)
+            let directory = CounterDirectory(actorSystem: first, counter: counter)
+            let root = try $DiscoverableActor<ClusterSystem>.resolve(id: directory.id, using: second)
+
+            guard case .actor(let reference) = try await root.invoke("counterName", arguments: nil) else {
+                Issue.record("Expected an actor reference")
+                return
+            }
+            #expect(reference.target == .name(ActorName(string: "counter://main")!))
+
+            // The second node knows where `counter://main` lives, standing in for a
+            // virtual actor registry, and resolves it as the concrete type.
+            guard case .name(let name) = reference.target, name == ActorName(string: "counter://main") else {
+                Issue.record("Expected the counter's name")
+                return
+            }
+            let named = try Counter.resolve(id: counter.id, using: second)
+            #expect(try await named.describe().title == "Counter")
+            #expect(try await named.invoke("increment", arguments: ["amount": 2]) == .json(2))
         }
     }
 
