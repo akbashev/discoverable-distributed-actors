@@ -240,7 +240,7 @@ The doc comments now appear in the schema, for the type, each field, and each ca
 
 This matters most when the caller is an LLM: it picks arguments by what they mean, not just by their types.
 
-`@JSONSchema` is also needed for some enums. Automatic descriptions can't handle enums with associated values, or enums with raw values that aren't `CaseIterable`, like `Condition` above. Without the macro, such a type, and any type that contains it, is described as `{}`, which accepts any value.
+`@JSONSchema` is also needed for some types. Automatic descriptions can't handle enums with associated values, enums with raw values that aren't `CaseIterable`, like `Condition` above, or structures with a distributed actor in a field, since inference can't create a placeholder actor. Without the macro, such a type, and any type that contains it, is described as `{}`, which accepts any value.
 
 To write a schema yourself, conform to `JSONSchemaRepresentable` instead.
 

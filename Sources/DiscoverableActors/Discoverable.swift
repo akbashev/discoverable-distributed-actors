@@ -17,7 +17,9 @@ public macro Discoverable() = #externalMacro(module: "DiscoverableActorsMacros",
 /// when the type declares them. Enumerations with `String` or integer raw values
 /// list their values; other enumerations are described in the shape synthesized
 /// `Codable` produces. Without the macro, discovery infers schemas from
-/// `init(from:)`, but can't add descriptions.
+/// `init(from:)`, but can't add descriptions, and can't describe enumerations with
+/// associated values, raw-value enumerations that aren't `CaseIterable`, or
+/// structures with a distributed actor in a field.
 @attached(extension, conformances: JSONSchemaRepresentable, names: named(jsonSchema))
 public macro JSONSchema() =
     #externalMacro(module: "DiscoverableActorsMacros", type: "JSONSchemaMacro")
