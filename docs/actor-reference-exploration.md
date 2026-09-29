@@ -61,4 +61,18 @@ It occurs at the protocol call returning the generic result, before following th
 
 Private result enums caused a separate return-type lookup failure in the first probe. Giving those experiment types module visibility fixed the concrete calls. This does not establish the cause of the earlier package-wide attempts; their errors were not isolated by operation.
 
-Same-node stub invocation and references to dead actors are not addressed by these experiments. Virtual actor identity and reactivation are outside this exploration.
+Same-node stub invocation and references to dead actors are not addressed by these experiments. Virtual actor identity is covered in the next section.
+
+## Lasting identity in ActorID metadata
+
+Question: can an action return a virtual actor itself (`-> Order`) and still give callers a lasting link, by carrying the virtual identity in the ClusterSystem `ActorID`?
+
+Observed with a discoverable actor returned across two nodes:
+
+| Experiment | Result |
+| --- | --- |
+| Custom metadata key (`@ActorID.Metadata(\.virtualID)`) | Dropped when the ID crosses nodes. ClusterSystem only sends `path`, `type`, and `wellKnown`; the hooks for sending custom keys are internal. |
+| `@ActorID.Metadata(\.wellKnown)` | Arrives on the other node, and the reference resolves and works. |
+| Releasing that actor, then creating a new one with the same well-known name | ClusterSystem crashes: `lock() failed in pthread_mutex with error 11` (`EDEADLK`). |
+
+So `wellKnown` can't stand in for a virtual identity: a name can't be reused by a new incarnation, and ClusterSystem documents well-known names as meant for system actors. It also resolves only on the node inside the ID, while a virtual actor may be reactivated elsewhere. The library therefore has no lasting links: references are for using now, and callers that need an actor again call the action that returned it again.

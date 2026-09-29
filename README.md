@@ -1,168 +1,271 @@
 # Discoverable Distributed Actors
 
-`DiscoverableActors` gives Swift distributed actors a description that other actors and callers can inspect and use without knowing their concrete Swift type. Its description borrows the `title`, `description`, `properties`, `actions`, and `links` vocabulary from the W3C Thing Description standard. It implements a small subset, not the full standard.
+Swift distributed actors that can explain themselves.
 
-The `@Discoverable` macro adds these distributed methods:
+Add `@Discoverable` to a distributed actor, and any caller holding its ID can ask what the actor offers and use it, without importing its Swift type. That caller might be another service, a generic client, or an LLM agent. The actor describes its properties and actions with JSON Schemas built from your signatures and doc comments, runs actions by name with JSON arguments, and links to other actors in its results, so a caller can move from one actor to the next.
 
-- `describe()`, which reports public distributed properties and documented actions with input and output schemas.
-- `invoke(_:arguments:)`, which decodes a `JSONValue`, dispatches by action name, and returns either `.json(JSONValue)` or `.actor(ActorReference)`.
-- `read(property:)`, which reads a distributed property by name and encodes its current value as `JSONValue`.
+The description follows the shape of the [W3C Thing Description](https://www.w3.org/TR/wot-thing-description11/): a `title` and `description`, read-only `properties`, and `actions` with `input` and `output` schemas and `safe` and `idempotent` flags, all with the same meaning as there. It isn't a valid Thing Description, though. It has no `forms`, `security`, or `@context`, because every action is reached through `invoke` on the actor system; it has no events; its schemas are JSON Schema; and action outputs use this package's own result envelope.
 
-The package targets macOS 15 and Swift 6.2.
+## Installation
 
-## Example
+```swift
+.package(url: "https://github.com/akbashev/discoverable-distributed-actors.git", from: "0.0.3")
+```
+
+```swift
+.product(name: "DiscoverableActors", package: "discoverable-distributed-actors")
+```
+
+Requires Swift 6.2 and macOS 15, and an actor system whose serialization requirement is `any Codable`, such as [`ClusterSystem`](https://github.com/apple/swift-distributed-actors).
+
+## Quick start
+
+Write distributed actors as usual, and add `@Discoverable`. Public distributed methods become actions, public distributed properties become read-only properties, and doc comments become descriptions. `@DiscoverableIgnored` hides a public method or property, like `clear()` below, and non-public ones, like `admit`, are never offered. `UserInfo` is a plain `Codable` structure, and its schema is inferred:
 
 ```swift
 import DiscoverableActors
 import Distributed
+import DistributedCluster
 
-public struct TodoSummary: Codable, Sendable {
-    public var itemCount: Int
-    public var titles: [String]
+struct UserInfo: Codable, Sendable {
+    var name: String
+    var bio: String?
+}
 
-    public init(itemCount: Int, titles: [String]) {
-        self.itemCount = itemCount
-        self.titles = titles
+/// A person using the app.
+@Discoverable
+distributed actor User {
+    typealias ActorSystem = ClusterSystem
+
+    private let details: UserInfo
+
+    init(actorSystem: ActorSystem, info: UserInfo) {
+        self.actorSystem = actorSystem
+        self.details = info
+    }
+
+    /// Who the user is.
+    public distributed var info: UserInfo { details }
+
+    /// Join a room.
+    /// - Parameter room: The room to join.
+    public distributed func join(_ room: Room) async throws {
+        try await room.admit(self, as: details.name)
     }
 }
 
-/// A snapshot of a to-do list.
+/// A chat room.
 @Discoverable
-public distributed actor TodoArchive {
-    public typealias ActorSystem = LocalTestingDistributedActorSystem
+distributed actor Room {
+    typealias ActorSystem = ClusterSystem
 
-    private let snapshot: TodoSummary
+    private var members: [String: User] = [:]
 
-    init(actorSystem: ActorSystem, snapshot: TodoSummary) {
-        self.actorSystem = actorSystem
-        self.snapshot = snapshot
+    /// Number of people in the room.
+    public distributed var memberCount: Int { members.count }
+
+    /// A member of the room.
+    /// - Parameter name: The member's display name.
+    @DiscoverableAction(safe: true, idempotent: true)
+    public distributed func member(named name: String) -> User? {
+        members[name]
     }
 
-    /// Return the archived snapshot.
-    public distributed func summary() -> TodoSummary {
-        snapshot
-    }
-}
-
-/// A list of things to do.
-@Discoverable
-public distributed actor TodoList {
-    public typealias ActorSystem = LocalTestingDistributedActorSystem
-
-    private var items: [String] = []
-
-    public init(actorSystem: ActorSystem) {
-        self.actorSystem = actorSystem
-    }
-
-    /// Number of items currently in the list.
-    public distributed var itemCount: Int { items.count }
-
-    /// Summarize the list.
-    public distributed func summary() -> TodoSummary {
-        TodoSummary(itemCount: items.count, titles: items)
-    }
-
-    /// Archive the current list and return the archive actor.
-    public distributed func archive() -> TodoArchive {
-        TodoArchive(
-            actorSystem: actorSystem,
-            snapshot: TodoSummary(itemCount: items.count, titles: items)
-        )
-    }
-
-    /// Clear the list for local maintenance.
+    /// Remove everyone. For moderators, so it's hidden from discovery.
     @DiscoverableIgnored
-    public distributed func reset() {
-        items.removeAll()
+    public distributed func clear() {
+        members.removeAll()
+    }
+
+    /// Called by a user joining. Not public, so not discoverable.
+    distributed func admit(_ user: User, as name: String) {
+        members[name] = user
     }
 }
 ```
 
-Calling the method directly keeps its Swift return type. Calling it through `invoke` uses a dynamic result, so the macro encodes ordinary values as `JSONValue`:
+A caller on another node needs only the user's and the room's IDs. It never names `User` or `Room`:
 
 ```swift
-let list = TodoList(actorSystem: system)
-let object = try await list.describe()
+let user = try $DiscoverableActor<ClusterSystem>.resolve(id: userID, using: system)
+let room = try $DiscoverableActor<ClusterSystem>.resolve(id: roomID, using: system)
 
-let typedSummary: TodoSummary = try await list.summary()
+// An actor as an argument: pass a reference to it.
+try await user.invoke("join", arguments: ["room": .reference(to: room)])
 
-let summaryResult: ActionResult = try await list.invoke("summary", arguments: nil)
-guard case .json(let summaryJSON) = summaryResult else {
+// An actor as a result: a link to follow.
+guard case .actor(let link) = try await room.invoke("member", arguments: ["name": "Ada"]) else {
     throw DiscoveryError.invalidActionResult
 }
-let summary: TodoSummary = try summaryJSON.decode()
-
-let actorResult = try await list.invoke("archive", arguments: nil)
-guard case .actor(let reference) = actorResult else {
-    throw DiscoveryError.invalidActorReference
-}
-let archive = try reference.resolve(using: system)
-let archivedResult = try await archive.invoke("summary", arguments: nil)
-guard case .json(let archivedJSON) = archivedResult else {
-    throw DiscoveryError.invalidActionResult
-}
-let archivedSummary: TodoSummary = try archivedJSON.decode()
+let member = try link.resolve(using: system)
+let info = try await member.read(property: "info")  // {"name": "Ada", "bio": "Writes programs."}
 ```
 
-`object` is an `ObjectDescription` containing the actor's title, description, property and action schemas, and links. Documentation comments supply descriptions, and `- Parameter` comments supply parameter descriptions.
+`$DiscoverableActor` is generated by Swift's `@Resolvable` macro. It resolves the ID of any discoverable actor as a remote reference, whatever its concrete type.
 
-Actor methods keep their ordinary Swift signatures. Public distributed methods and read-only distributed properties appear in the description by default; use `@DiscoverableIgnored` to omit a distributed declaration. Local state stays private. The description follows the W3C Thing Description vocabulary, but this package implements only a subset and uses its own `ActionResult` envelope. Actor results are supported when returned directly or as an optional; nested actor references, such as arrays of actors, are not. An action can also return an `ActorName`, a lasting URI such as `app://order/42` that the caller resolves in its own way, for actors like virtual actors that outlive any one incarnation.
+`describe()` reports each action with JSON Schemas for its input and output. Here is the user's `join`, whose argument is an actor, passed as a reference, `{"id": …}`: the same shape `member(named:)` returns.
 
-Types with richer schema information can conform to `JSONSchemaRepresentable`:
-
-```swift
-enum Priority: String, Codable, JSONSchemaRepresentable {
-    case low, high
-
-    static let jsonSchema: JSONValue = [
-        "type": "string",
-        "enum": ["low", "high"]
-    ]
+```json
+"join": {
+  "description": "Join a room.",
+  "safe": false,
+  "idempotent": false,
+  "input": {
+    "type": "object",
+    "description": "Join a room.",
+    "properties": {
+      "room": {
+        "type": "object",
+        "description": "The room to join.",
+        "properties": { "id": {} },
+        "required": ["id"]
+      }
+    },
+    "required": ["room"],
+    "additionalProperties": false
+  }
 }
 ```
 
-`JSONValue` represents JSON-compatible nulls, booleans, numbers, strings, arrays, and objects. Unknown actions, unavailable actions, missing required arguments, unexpected argument keys, invalid argument shapes, and invalid result cases are reported as `DiscoveryError` values.
+## Results and links
+
+`invoke` returns an `ActionResult`:
+
+- `.json(JSONValue)` for ordinary values. `Void` actions return `.json(null)`. Decode with `result.decode(MyType.self)`.
+- `.actor(ActorReference)` when the action returns another discoverable actor, directly or as an optional. The reference holds the actor's ID, `{"id": …}`, and `reference.resolve(using: system)` turns it back into an actor.
+
+Actions without arguments can be called without `arguments:`, as in `invoke("refresh")`, and the result can be ignored without `_ =`.
+
+An action can also take a distributed actor as an argument, like `join(_:)` above. The caller passes a reference, `{"id": …}`: `.reference(to: actor)` for an actor it holds, or a reference it got from a result, which already encodes that way. The receiving actor resolves it with its own actor system. Actors inside arrays and string-keyed dictionaries work the same way, in both directions: `[Room]` is passed and returned as an array of `{"id": …}` references. An actor that isn't discoverable is returned as such a reference inside `.json`, since a caller can pass it on but can't describe it. Anything else is rejected with `DiscoveryError.invalidArgument`, which says where the bad reference is.
+
+A reference points at one incarnation of an actor on one node, and stops resolving when that actor stops. References are for using now: when you need the actor again later, call the action that returned it again.
+
+See [docs/actor-systems.md](docs/actor-systems.md) for how references work with different actor systems.
 
 ## Action metadata
 
-Actions can say how they behave and how their results relate to the actor, using documentation callouts, the `@DiscoverableAction` attribute, or both. The attribute takes precedence, and the macro warns when the two disagree.
+Actions can say how they behave, with doc comment callouts, the `@DiscoverableAction` attribute, or both. The attribute takes precedence, and the macro warns when the two disagree.
+
+| Metadata | Doc comment | Attribute | Default |
+| --- | --- | --- | --- |
+| Leaves the actor's state unchanged | `- Safe: true` | `safe: true` | `false` |
+| Repeating it has no further effect | `- Idempotent: true` | `idempotent: true` | `false` |
+| Offered only while a condition holds | | `when: "isOpen"` | Always offered |
+
+These two declarations are equivalent:
 
 ```swift
-/// Archive the current list and return the archive actor.
-/// - Relation: archive
+/// A member of the room.
+/// - Safe: true
 /// - Idempotent: true
-@DiscoverableAction(when: "!items.isEmpty")
-public distributed func archive() -> TodoArchive { ... }
+public distributed func member(named name: String) -> User?
 
-/// Summarize the list.
+/// A member of the room.
 @DiscoverableAction(safe: true, idempotent: true)
-public distributed func summary() -> TodoSummary { ... }
+public distributed func member(named name: String) -> User?
 ```
 
-- `rel` / `- Relation:` is the link relation of a returned actor. It defaults to the action name, appears in the action's output schema, and is carried by the returned `ActorReference`.
-- `safe` / `- Safe:` marks actions that leave the actor's state unchanged, and `idempotent` / `- Idempotent:` marks actions that can be repeated without further effect. Both default to `false`, as in the Thing Description.
-- `when:` is a Boolean expression on the actor, such as a property name. While it is `false`, `describe()` omits the action and `invoke` throws `DiscoveryError.unavailableAction`, so a description reflects what the actor can do in its current state.
+Doc comment callouts keep the metadata with the documentation. The attribute is checked by the compiler, and it's the only way to set `when:`.
 
-## Actor systems
+`when:` takes a Boolean expression evaluated on the actor. While it is `false`, `describe()` leaves the action out and `invoke` throws `DiscoveryError.unavailableAction`, so a description shows what the actor can do in its current state. The expression is compiled as part of the generated code, so mistakes are compile errors, but they're reported inside the macro expansion rather than at the string.
 
-`DiscoverableActor` works with actor systems whose serialization requirement is `any Codable` and whose actor IDs are `Codable`. See [docs/actor-systems.md](docs/actor-systems.md) for why, how actor references work, and possible directions.
+A caller can use `safe` and `idempotent` for policy, for example running safe actions automatically, retrying idempotent ones after a failure, and asking a person before anything else.
+
+## Schemas
+
+Argument, result, and property schemas come from the Swift types:
+
+| Swift type | Schema |
+| --- | --- |
+| `String` | `{"type": "string"}` |
+| `Bool` | `{"type": "boolean"}` |
+| Integers | `{"type": "integer"}` |
+| Floating-point numbers | `{"type": "number"}` |
+| `T?` | `{"anyOf": [T, {"type": "null"}]}` |
+| `[T]`, `Set<T>` | `{"type": "array", "items": T}` |
+| `[String: T]` | `{"type": "object", "additionalProperties": T}` |
+| A `String` or `Int` enum that is `CaseIterable` | `{"type": "string", "enum": […]}` |
+| `UUID`, `URL`, `Date`, `Data`, `Decimal` | Their JSON form, such as `{"type": "string", "format": "uuid"}` |
+| A type marked `@JSONSchema` | Generated from its declaration, with its doc comments |
+| Other `Codable` types | Described automatically from their `Codable` conformance |
+| A `JSONSchemaRepresentable` type | Its hand-written `jsonSchema` |
+
+### Adding descriptions with `@JSONSchema`
+
+Your own `Codable` types are described automatically. A caller learns their field names and types, but not what the fields mean.
+
+To tell it, add `@JSONSchema` and doc comments:
+
+```swift
+/// A copy of a book on the shelves.
+@JSONSchema
+struct Copy: Codable {
+    /// Where the copy is shelved, if it has been.
+    var shelfmark: String?
+    /// The copy's physical condition.
+    var condition: Condition
+}
+
+@JSONSchema
+enum Condition: String, Codable {
+    /// Never lent.
+    case new
+    case good
+    /// Due for replacement.
+    case worn = "worn-out"
+}
+```
+
+The doc comments now appear in the schema, for the type, each field, and each case:
+
+```json
+"condition": {
+  "type": "string",
+  "description": "The copy's physical condition.",
+  "oneOf": [
+    { "const": "new", "description": "Never lent." },
+    { "const": "good" },
+    { "const": "worn-out", "description": "Due for replacement." }
+  ]
+}
+```
+
+This matters most when the caller is an LLM: it picks arguments by what they mean, not just by their types.
+
+`@JSONSchema` is also needed for some enums. Automatic descriptions can't handle enums with associated values, or enums with raw values that aren't `CaseIterable`, like `Condition` above. Without the macro, such a type, and any type that contains it, is described as `{}`, which accepts any value.
+
+To write a schema yourself, conform to `JSONSchemaRepresentable` instead.
+
+Other modules can also add more specific overloads of `Discovery.parameter(_:description:type:)`, for example to use schemas from another library.
+
+Parameters with default values aren't required: omitting one uses the default, while passing `null` for a non-optional parameter is an error. Optional parameters accept `null` or can be left out.
+
+## What becomes discoverable
+
+- Public distributed methods become actions, and public distributed properties become read-only properties. Everything else, including private state and non-public distributed methods, stays hidden.
+- `@DiscoverableIgnored` hides a public distributed method or property.
+- Doc comments supply the summary and `- Parameter` descriptions, from `///` or `/** */` comments.
+- Parameter names in the schema are the internal names, so `member(named name:)` takes `{"name": …}`. Backticks are dropped.
+- Declarations inside `#if` blocks are discovered under the same conditions.
+- The macro reports an error for overloaded action names and for methods named `describe`, `invoke`, or `read`, and a warning for generic methods, which can't be discovered.
+
+`invoke` and `read` report problems as `DiscoveryError` values: unknown or unavailable actions, unknown properties, missing or unexpected arguments, and invalid results or references. An argument that doesn't match its schema throws `invalidArgument(name:reason:)`, with a reason in JSON terms, such as `expected integer, got string at authors[0].born`. That matters most for callers such as LLMs, which can correct the argument and retry, and it reaches remote callers intact, unlike a Swift `DecodingError`, which actor systems can't send back.
+
+## Limitations
+
+- Actor systems must use `any Codable` serialization, and returned actors need `Codable` IDs. See [docs/actor-systems.md](docs/actor-systems.md).
+- Only a discoverable actor returned directly, or as an optional, is an `.actor` link. Actors in arrays and dictionaries are `{"id": …}` references inside `.json`, and actors stored in structure fields aren't supported: their schema is `{}`.
+- `invoke` can't return `$DiscoverableActor` directly because of a Swift runtime issue; see [docs/actor-reference-exploration.md](docs/actor-reference-exploration.md).
+- There are no events or subscriptions yet.
 
 ## Development
 
-Format Swift sources with:
-
-```sh
-swift-format format --in-place --recursive Sources Tests
-```
-
-Run the test suite with:
-
 ```sh
 swift test
+swift format lint --recursive Sources Tests
 ```
 
-The test target also depends on `swift-distributed-actors` to exercise discovery with a distributed actor system.
+The tests use [`swift-distributed-actors`](https://github.com/apple/swift-distributed-actors) to run discovery across two cluster nodes. `QuickStartTests` runs the quick start in this README.
 
 ## License
 
