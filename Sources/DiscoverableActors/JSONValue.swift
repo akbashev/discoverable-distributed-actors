@@ -1,3 +1,5 @@
+import Distributed
+
 #if canImport(FoundationEssentials)
     import FoundationEssentials
 #else
@@ -66,8 +68,35 @@ extension JSONValue {
 
     /// Decodes a `Decodable` value from this JSON.
     public func decode<Value: Decodable>(_ type: Value.Type = Value.self) throws -> Value {
+        try decode(type, actorSystem: nil)
+    }
+
+    /// Decodes a value, giving distributed actors inside it an actor system to resolve with.
+    func decode<Value: Decodable>(
+        _ type: Value.Type,
+        actorSystem: (any DistributedActorSystem)?
+    ) throws -> Value {
         let data = try JSONEncoder().encode(self)
-        return try JSONDecoder().decode(type, from: data)
+        let decoder = JSONDecoder()
+        if let actorSystem { decoder.userInfo[.actorSystemKey] = actorSystem }
+        return try decoder.decode(type, from: data)
+    }
+
+    /// The value at a coding path, such as the one in a `DecodingError`.
+    func value(at path: [any CodingKey]) -> JSONValue? {
+        var current: JSONValue? = self
+        for key in path {
+            switch current {
+            case .array(let elements)?:
+                guard let index = key.intValue, elements.indices.contains(index) else { return nil }
+                current = elements[index]
+            case .object(let properties)?:
+                current = properties[key.stringValue]
+            default:
+                return nil
+            }
+        }
+        return current
     }
 
     public subscript(key: String) -> JSONValue? {

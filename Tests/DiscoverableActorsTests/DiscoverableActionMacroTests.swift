@@ -42,14 +42,14 @@ struct DiscoverableActionMacroTests {
         let diagnostics = try expandDiscoverable(
             """
             /// Archive.
-            /// - Relation: archive
-            @DiscoverableAction(rel: "snapshot")
+            /// - Safe: true
+            @DiscoverableAction(safe: false)
             public distributed func archive() -> Archive { Archive(actorSystem: actorSystem) }
             """
         )
         #expect(
             diagnostics.map(\.message) == [
-                "@DiscoverableAction 'rel' overrides the '- Relation:' documentation callout"
+                "@DiscoverableAction 'safe' overrides the '- Safe:' documentation callout"
             ])
         #expect(diagnostics.first?.diagMessage.severity == .warning)
     }

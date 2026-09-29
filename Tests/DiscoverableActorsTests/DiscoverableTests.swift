@@ -101,7 +101,6 @@ struct DiscoverableTests {
         #expect(description.properties["itemCount"]?["readOnly"] == true)
         #expect(description.properties["items"] == nil)
         #expect(description.properties["internalState"] == nil)
-        #expect(description.links.isEmpty)
 
         let add = try await action("add", of: list)
         #expect(add.description == "Add an item to the list.")
@@ -147,7 +146,7 @@ struct DiscoverableTests {
         let list = TodoList(actorSystem: system)
 
         #expect(try await list.invoke("label", arguments: [:]) == .json("untitled"))
-        await #expect(throws: DecodingError.self) {
+        await #expect(throws: DiscoveryError.invalidArgument(name: "value", reason: "expected string, got null")) {
             try await list.invoke("label", arguments: ["value": nil])
         }
     }

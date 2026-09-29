@@ -16,6 +16,7 @@ struct DiscoverableActorsMacrosPlugin: CompilerPlugin {
         DiscoverableMacro.self,
         DiscoverableIgnoredMacro.self,
         DiscoverableActionMacro.self,
+        JSONSchemaMacro.self,
     ]
 }
 
@@ -100,7 +101,7 @@ public struct DiscoverableMacro: MemberMacro, ExtensionMacro {
             }
             let output =
                 action.resultType.map {
-                    "DiscoverableActors.Discovery.resultSchema(for: \($0).self, rel: \(literal(action.rel)))"
+                    "DiscoverableActors.Discovery.resultSchema(for: \($0).self)"
                 } ?? "nil"
             let assignment = """
                 actions[\(literal(action.key))] = DiscoverableActors.ObjectAction(
@@ -158,10 +159,10 @@ public struct DiscoverableMacro: MemberMacro, ExtensionMacro {
             let callArguments = action.parameters.map { parameter in
                 let reader = parameter.isOptional ? "optionalArgument" : "argument"
                 let decoded =
-                    "try DiscoverableActors.Discovery.\(reader)(\(parameter.valueType).self, \(literal(parameter.key)), in: arguments)"
+                    "try DiscoverableActors.Discovery.\(reader)(\(parameter.valueType).self, \(literal(parameter.key)), in: arguments, actorSystem: self.actorSystem)"
                 let value =
                     parameter.defaultValue.map {
-                        "try DiscoverableActors.Discovery.defaultedArgument(\(parameter.declaredType).self, \(literal(parameter.key)), in: arguments, default: (\($0)))"
+                        "try DiscoverableActors.Discovery.defaultedArgument(\(parameter.declaredType).self, \(literal(parameter.key)), in: arguments, actorSystem: self.actorSystem, default: (\($0)))"
                     } ?? decoded
                 return parameter.label.map { "\($0): \(value)" } ?? value
             }
@@ -169,7 +170,7 @@ public struct DiscoverableMacro: MemberMacro, ExtensionMacro {
                 "\(action.isThrowing ? "try " : "")\(action.isAsync ? "await " : "")self.\(action.name)(\(callArguments.joined(separator: ", ")))"
             let body =
                 action.returnsValue
-                ? "return try DiscoverableActors.Discovery.result(\(call), actorSystem: ActorSystem.self, rel: \(literal(action.rel)))"
+                ? "return try DiscoverableActors.Discovery.result(\(call), actorSystem: ActorSystem.self)"
                 : "\(call)\nreturn .json(.null)"
             let availability = action.availability.map {
                 "guard (\($0)) else { throw DiscoverableActors.DiscoveryError.unavailableAction(\(literal(action.key))) }\n"
@@ -181,6 +182,7 @@ public struct DiscoverableMacro: MemberMacro, ExtensionMacro {
         }
 
         let invoke: DeclSyntax = """
+            @discardableResult
             public distributed func invoke(
                 _ action: String,
                 arguments: DiscoverableActors.JSONValue
@@ -198,7 +200,7 @@ public struct DiscoverableMacro: MemberMacro, ExtensionMacro {
             conditional(
                 property.condition,
                 around:
-                    "case \(literal(property.key)): return try DiscoverableActors.Discovery.json(self.\(property.name))"
+                    "case \(literal(property.key)): return try DiscoverableActors.Discovery.propertyValue(self.\(property.name))"
             )
         }
         let readProperty: DeclSyntax = """
@@ -228,8 +230,6 @@ private struct Action {
     let isAsync: Bool
     let isThrowing: Bool
     let resultType: String?
-    /// Link relation of a returned actor.
-    let rel: String
     let isSafe: Bool
     let isIdempotent: Bool
     /// Boolean expression that must hold for the action to be offered.
@@ -242,7 +242,6 @@ private struct Action {
 
 /// Hypermedia metadata from `@DiscoverableAction` and documentation callouts.
 private struct ActionMetadata {
-    var rel: String?
     var safe: Bool?
     var idempotent: Bool?
     var availability: String?
@@ -337,7 +336,6 @@ private func collectActions(in actor: ActorDeclSyntax, context: some MacroExpans
                 isAsync: effects?.asyncSpecifier != nil,
                 isThrowing: effects?.throwsClause != nil,
                 resultType: returnType.flatMap { ["Void", "Swift.Void", "()"].contains($0) ? nil : $0 },
-                rel: metadata.rel ?? key,
                 isSafe: metadata.safe ?? false,
                 isIdempotent: metadata.idempotent ?? false,
                 availability: metadata.availability,
@@ -356,7 +354,6 @@ private func actionMetadata(
     context: some MacroExpansionContext
 ) -> ActionMetadata {
     var fromDocumentation = ActionMetadata()
-    fromDocumentation.rel = documentation.callouts["relation"].flatMap { $0.isEmpty ? nil : $0 }
     for (callout, keyPath) in [("Safe", \ActionMetadata.safe), ("Idempotent", \ActionMetadata.idempotent)] {
         guard let text = documentation.callouts[callout.lowercased()] else { continue }
         switch text.lowercased() {
@@ -378,13 +375,13 @@ private func actionMetadata(
             let expression = argument.expression
             if expression.is(NilLiteralExprSyntax.self) { continue }
             switch label {
-            case "rel", "when":
+            case "when":
                 guard let text = stringLiteral(expression) else {
                     context.diagnose(
                         Diagnostic(node: expression, message: DiscoveryDiagnostic.nonLiteralArgument(label)))
                     continue
                 }
-                if label == "rel" { fromAttribute.rel = text } else { fromAttribute.availability = text }
+                fromAttribute.availability = text
             case "safe", "idempotent":
                 guard let literal = expression.as(BooleanLiteralExprSyntax.self) else {
                     context.diagnose(
@@ -404,12 +401,10 @@ private func actionMetadata(
         context.diagnose(
             Diagnostic(node: function.name, message: DiscoveryDiagnostic.conflictingMetadata(argument, callout)))
     }
-    conflict("rel", "Relation", fromAttribute.rel, fromDocumentation.rel)
     conflict("safe", "Safe", fromAttribute.safe, fromDocumentation.safe)
     conflict("idempotent", "Idempotent", fromAttribute.idempotent, fromDocumentation.idempotent)
 
     return ActionMetadata(
-        rel: fromAttribute.rel ?? fromDocumentation.rel,
         safe: fromAttribute.safe ?? fromDocumentation.safe,
         idempotent: fromAttribute.idempotent ?? fromDocumentation.idempotent,
         availability: fromAttribute.availability
@@ -503,7 +498,7 @@ private func isAttribute(_ element: AttributeListSyntax.Element, named name: Str
     return attributeName == name || attributeName.hasSuffix(".\(name)")
 }
 
-private func unwrapOptional(_ type: TypeSyntax) -> (String, Bool) {
+func unwrapOptional(_ type: TypeSyntax) -> (String, Bool) {
     if let optional = type.as(OptionalTypeSyntax.self) {
         return (optional.wrappedType.trimmedDescription, true)
     }
@@ -517,7 +512,7 @@ private func unwrapOptional(_ type: TypeSyntax) -> (String, Bool) {
 }
 
 /// An identifier without the backticks that escape keywords, as callers name it.
-private func unescaped(_ token: TokenSyntax) -> String {
+func unescaped(_ token: TokenSyntax) -> String {
     let text = token.text
     guard text.count > 1, text.hasPrefix("`"), text.hasSuffix("`") else { return text }
     return String(text.dropFirst().dropLast())
@@ -529,7 +524,7 @@ private func callLabel(_ token: TokenSyntax) -> String {
     return ["inout", "var", "let"].contains(name) ? "`\(name)`" : name
 }
 
-private func literal(_ value: String?) -> String {
+func literal(_ value: String?) -> String {
     guard let value else { return "nil" }
     return StringLiteralExprSyntax(content: value).description
 }
@@ -538,7 +533,7 @@ private func literal(_ value: String?) -> String {
 
 /// The summary, `- Parameter` descriptions, and other `- Name: value` callouts
 /// from `///` and `/** */` comments.
-private struct Documentation {
+struct Documentation {
     var summary: String?
     var parameters: [String: String] = [:]
     /// Single-line callouts keyed by lowercased name, such as `relation` or `safe`.
@@ -568,7 +563,7 @@ private struct Documentation {
                 parametersListIndent = nil
                 continuing = addParameter(String(line.dropFirst("- parameter ".count))).map { ($0, indent) }
             } else if line.hasPrefix("- ") {
-                // Other callouts (`- Returns:`, `- Relation:`) end the summary.
+                // Other callouts (`- Returns:`, `- Safe:`) end the summary.
                 inCallouts = true
                 parametersListIndent = nil
                 continuing = nil

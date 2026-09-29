@@ -12,7 +12,6 @@ distributed actor Shelf {
     var hasBoxes: Bool { !boxes.isEmpty }
 
     /// Put a new box on the shelf.
-    /// - Relation: item
     public distributed func add() -> Box {
         let box = Box(actorSystem: actorSystem)
         boxes.append(box)
@@ -20,7 +19,7 @@ distributed actor Shelf {
     }
 
     /// The newest box.
-    @DiscoverableAction(rel: "latest", safe: true, idempotent: true, when: "hasBoxes")
+    @DiscoverableAction(safe: true, idempotent: true, when: "hasBoxes")
     public distributed func newest() -> Box? {
         boxes.last
     }
@@ -70,20 +69,18 @@ struct HypermediaTests {
     }
 
     @Test
-    func actorResultsCarryTheirRelation() async throws {
+    func actorResultsAreReferences() async throws {
         let shelf = Shelf(actorSystem: system)
         let actions = try await shelf.describe().actions
 
         let addOutput = try #require(actions["add"]?.output)
-        #expect(addOutput["properties"]?["actor"]?["properties"]?["rel"] == ["const": "item"])
-        let drawerOutput = try #require(actions["drawer"]?.output)
-        #expect(drawerOutput["properties"]?["actor"]?["properties"]?["rel"] == ["const": "drawer"])
+        #expect(
+            addOutput["properties"]?["actor"] == ["type": "object", "properties": ["id": [:]], "required": ["id"]])
 
         guard case .actor(let added) = try await shelf.invoke("add", arguments: nil) else {
             Issue.record("Expected an actor reference")
             return
         }
-        #expect(added.rel == "item")
         let box = try Box.resolve(id: added.actorID(using: system), using: system)
         #expect(try await box.describe().title == "Box")
 
@@ -91,7 +88,6 @@ struct HypermediaTests {
             Issue.record("Expected an actor reference")
             return
         }
-        #expect(newest.rel == "latest")
         #expect(try newest.actorID(using: system) == box.id)
     }
 
