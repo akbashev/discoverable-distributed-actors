@@ -1,9 +1,9 @@
-import Distributed
+public import Distributed
 
 #if canImport(FoundationEssentials)
-    import FoundationEssentials
+    public import FoundationEssentials
 #else
-    import Foundation
+    public import Foundation
 #endif
 
 /// Makes a distributed actor discoverable: every `public distributed func`
@@ -20,6 +20,26 @@ public macro Discoverable() = #externalMacro(module: "DiscoverableActorsMacros",
 @attached(peer)
 public macro DiscoverableIgnored() =
     #externalMacro(module: "DiscoverableActorsMacros", type: "DiscoverableIgnoredMacro")
+
+/// Adds hypermedia metadata to an action of a ``Discoverable()`` actor.
+///
+/// Documentation callouts can supply the same metadata (`- Relation: archive`,
+/// `- Safe: true`, `- Idempotent: true`); arguments given here take precedence.
+///
+/// - Parameters:
+///   - rel: The link relation of an actor the action returns. Defaults to the action name.
+///   - safe: Whether the action leaves the actor's state unchanged.
+///   - idempotent: Whether repeating the action with the same arguments has no further effect.
+///   - when: A Boolean expression on the actor, such as a property name. While it is
+///     `false`, `describe()` omits the action and `invoke` rejects it with
+///     ``DiscoveryError/unavailableAction(_:)``.
+@attached(peer)
+public macro DiscoverableAction(
+    rel: String? = nil,
+    safe: Bool? = nil,
+    idempotent: Bool? = nil,
+    when: String? = nil
+) = #externalMacro(module: "DiscoverableActorsMacros", type: "DiscoverableActionMacro")
 
 /// A distributed actor that can describe its actions and invoke them by name.
 ///
@@ -46,7 +66,8 @@ public struct ObjectDescription: Codable, Sendable, Equatable {
     public var properties: [String: JSONValue]
     /// Related resources described with the W3C link relation and target URI.
     public var links: [ObjectLink]
-    /// Action affordances keyed by the method name accepted by `invoke`.
+    /// Action affordances keyed by the method name accepted by `invoke`. Actions that are
+    /// unavailable in the actor's current state are omitted.
     public var actions: [String: ObjectAction]
 
     public init(
@@ -86,26 +107,57 @@ public struct ObjectAction: Codable, Sendable, Equatable {
     public var input: JSONValue?
     /// JSON Schema for the action output; `nil` when it returns `Void`.
     public var output: JSONValue?
+    /// Whether the action leaves the actor's state unchanged.
+    public var safe: Bool
+    /// Whether repeating the action with the same arguments has no further effect.
+    public var idempotent: Bool
 
     public init(
         description: String?,
         input: JSONValue?,
-        output: JSONValue? = nil
+        output: JSONValue? = nil,
+        safe: Bool = false,
+        idempotent: Bool = false
     ) {
         self.description = description
         self.input = input
         self.output = output
+        self.safe = safe
+        self.idempotent = idempotent
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case description, input, output, safe, idempotent
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        description = try container.decodeIfPresent(String.self, forKey: .description)
+        input = try container.decodeIfPresent(JSONValue.self, forKey: .input)
+        output = try container.decodeIfPresent(JSONValue.self, forKey: .output)
+        // Thing Description defaults both to false when absent.
+        safe = try container.decodeIfPresent(Bool.self, forKey: .safe) ?? false
+        idempotent = try container.decodeIfPresent(Bool.self, forKey: .idempotent) ?? false
     }
 }
 
-/// A reference to another discoverable actor.
+/// A link to another discoverable actor, returned by an action.
 ///
 /// Resolve it with an actor system compatible with the system that created the
 /// referenced actor.
 public struct ActorReference: Codable, Sendable, Equatable {
+    /// How the referenced actor relates to the actor that returned it.
+    public let rel: String?
+    /// The actor's `Codable` ID.
     private let identifier: JSONValue
 
-    init(identifier: JSONValue) {
+    private enum CodingKeys: String, CodingKey {
+        case rel
+        case identifier = "id"
+    }
+
+    init(rel: String?, identifier: JSONValue) {
+        self.rel = rel
         self.identifier = identifier
     }
 
@@ -113,8 +165,14 @@ public struct ActorReference: Codable, Sendable, Equatable {
     public func resolve<System: DistributedActorSystem<any Codable>>(
         using system: System
     ) throws -> $DiscoverableActor<System> where System.ActorID: Decodable {
-        let id = try identifier.decode(System.ActorID.self)
-        return try $DiscoverableActor<System>.resolve(id: id, using: system)
+        try $DiscoverableActor<System>.resolve(id: actorID(using: system), using: system)
+    }
+
+    /// The referenced actor's ID in `system`, for resolving it as a concrete type.
+    public func actorID<System: DistributedActorSystem>(
+        using system: System
+    ) throws -> System.ActorID where System.ActorID: Decodable {
+        try identifier.decode(System.ActorID.self)
     }
 }
 
@@ -169,6 +227,8 @@ public enum ActionResult: Codable, Sendable, Equatable {
 
 public enum DiscoveryError: Error, Codable, Equatable, Sendable {
     case unknownAction(String)
+    /// The action exists but isn't available in the actor's current state.
+    case unavailableAction(String)
     case unknownProperty(String)
     case missingArgument(String)
     case unexpectedArgument(String)

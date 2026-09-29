@@ -1,4 +1,4 @@
-import Distributed
+public import Distributed
 
 /// A type that supplies its own JSON Schema to discovery. Types without one
 /// are described by their structure where it's known (strings, numbers,
@@ -100,15 +100,25 @@ public enum Discovery {
     public static var void: JSONValue { .null }
 
     /// The JSON Schema for the tagged result returned by `invoke`.
-    public static func resultSchema(for type: Any.Type) -> JSONValue {
+    ///
+    /// - Parameter rel: The link relation of a returned actor.
+    public static func resultSchema(for type: Any.Type, rel: String? = nil) -> JSONValue {
         if type is any DiscoverableActor.Type {
-            return taggedResult("actor", [:])
+            return taggedResult("actor", referenceSchema(rel: rel))
         }
-        // `result(_:actorSystem:)` returns a present actor as a reference and `nil` as JSON null.
+        // `result(_:actorSystem:rel:)` returns a present actor as a reference and `nil` as JSON null.
         if let optional = type as? any _DiscoveryOptional.Type, optional.wrappedType is any DiscoverableActor.Type {
-            return ["anyOf": [taggedResult("actor", [:]), taggedResult("json", ["type": "null"])]]
+            return [
+                "anyOf": [taggedResult("actor", referenceSchema(rel: rel)), taggedResult("json", ["type": "null"])]
+            ]
         }
         return taggedResult("json", schema(for: type))
+    }
+
+    private static func referenceSchema(rel: String?) -> JSONValue {
+        var properties: [String: JSONValue] = ["id": [:]]
+        if let rel { properties["rel"] = ["const": .string(rel)] }
+        return ["type": "object", "properties": .object(properties)]
     }
 
     private static func taggedResult(_ kind: String, _ valueSchema: JSONValue) -> JSONValue {
@@ -130,7 +140,8 @@ public enum Discovery {
 
     public static func result<System: DistributedActorSystem<any Codable>, Value: Encodable>(
         _ value: Value,
-        actorSystem: System.Type
+        actorSystem: System.Type,
+        rel: String? = nil
     ) throws -> ActionResult {
         if let actor = value as? any DiscoverableActor {
             guard actor.actorSystem is System,
@@ -138,7 +149,7 @@ public enum Discovery {
             else {
                 throw DiscoveryError.invalidActorReference
             }
-            return .actor(ActorReference(identifier: try JSONValue(encoding: identifier)))
+            return .actor(ActorReference(rel: rel, identifier: try JSONValue(encoding: identifier)))
         }
         return .json(try json(value))
     }

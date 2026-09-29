@@ -122,7 +122,27 @@ enum Priority: String, Codable, JSONSchemaRepresentable {
 }
 ```
 
-`JSONValue` represents JSON-compatible nulls, booleans, numbers, strings, arrays, and objects. Unknown actions, missing required arguments, unexpected argument keys, invalid argument shapes, and invalid result cases are reported as `DiscoveryError` values.
+`JSONValue` represents JSON-compatible nulls, booleans, numbers, strings, arrays, and objects. Unknown actions, unavailable actions, missing required arguments, unexpected argument keys, invalid argument shapes, and invalid result cases are reported as `DiscoveryError` values.
+
+## Action metadata
+
+Actions can say how they behave and how their results relate to the actor, using documentation callouts, the `@DiscoverableAction` attribute, or both. The attribute takes precedence, and the macro warns when the two disagree.
+
+```swift
+/// Archive the current list and return the archive actor.
+/// - Relation: archive
+/// - Idempotent: true
+@DiscoverableAction(when: "!items.isEmpty")
+public distributed func archive() -> TodoArchive { ... }
+
+/// Summarize the list.
+@DiscoverableAction(safe: true, idempotent: true)
+public distributed func summary() -> TodoSummary { ... }
+```
+
+- `rel` / `- Relation:` is the link relation of a returned actor. It defaults to the action name, appears in the action's output schema, and is carried by the returned `ActorReference`.
+- `safe` / `- Safe:` marks actions that leave the actor's state unchanged, and `idempotent` / `- Idempotent:` marks actions that can be repeated without further effect. Both default to `false`, as in the Thing Description.
+- `when:` is a Boolean expression on the actor, such as a property name. While it is `false`, `describe()` omits the action and `invoke` throws `DiscoveryError.unavailableAction`, so a description reflects what the actor can do in its current state.
 
 ## Actor systems
 

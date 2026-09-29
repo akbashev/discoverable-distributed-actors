@@ -135,6 +135,7 @@ struct ClusterTests {
                 Issue.record("Expected an actor reference")
                 return
             }
+            #expect(reference.rel == "counterActor")
             let child = try reference.resolve(using: second)
 
             #expect(try await child.describe().title == "Counter")

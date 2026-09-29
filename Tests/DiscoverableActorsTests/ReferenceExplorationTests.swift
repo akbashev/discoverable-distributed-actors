@@ -1,6 +1,7 @@
 import DiscoverableActors
-import Distributed
+public import Distributed
 import DistributedCluster
+import Logging
 import Testing
 
 extension $DiscoverableActor: Codable where ActorSystem.ActorID: Codable {}

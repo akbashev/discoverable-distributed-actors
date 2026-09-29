@@ -2,6 +2,14 @@
 import CompilerPluginSupport
 import PackageDescription
 
+/// Swift 7 behavior adopted early.
+let upcomingFeatures: [SwiftSetting] = [
+    .enableUpcomingFeature("ExistentialAny"),
+    .enableUpcomingFeature("InternalImportsByDefault"),
+    .enableUpcomingFeature("MemberImportVisibility"),
+    .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
+]
+
 let package = Package(
     name: "discoverable-distributed-actors",
     platforms: [
@@ -24,13 +32,15 @@ let package = Package(
                 .product(name: "SwiftSyntaxMacros", package: "swift-syntax"),
                 .product(name: "SwiftDiagnostics", package: "swift-syntax"),
                 .product(name: "SwiftCompilerPlugin", package: "swift-syntax"),
-            ]
+            ],
+            swiftSettings: upcomingFeatures + [.strictMemorySafety()]
         ),
         .target(
             name: "DiscoverableActors",
             dependencies: [
                 "DiscoverableActorsMacros"
-            ]
+            ],
+            swiftSettings: upcomingFeatures + [.strictMemorySafety()]
         ),
         .testTarget(
             name: "DiscoverableActorsTests",
@@ -41,8 +51,8 @@ let package = Package(
                 .product(name: "SwiftParser", package: "swift-syntax"),
                 .product(name: "SwiftSyntax", package: "swift-syntax"),
                 .product(name: "SwiftSyntaxMacroExpansion", package: "swift-syntax"),
-            ]
+            ],
+            swiftSettings: upcomingFeatures
         ),
-    ],
-    swiftLanguageModes: [.v6]
+    ]
 )

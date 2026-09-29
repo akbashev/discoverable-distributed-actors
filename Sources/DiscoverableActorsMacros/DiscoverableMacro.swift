@@ -1,8 +1,8 @@
 import SwiftCompilerPlugin
 import SwiftDiagnostics
-import SwiftSyntax
+public import SwiftSyntax
 import SwiftSyntaxBuilder
-import SwiftSyntaxMacros
+public import SwiftSyntaxMacros
 
 #if canImport(FoundationEssentials)
     import FoundationEssentials
@@ -12,10 +12,28 @@ import SwiftSyntaxMacros
 
 @main
 struct DiscoverableActorsMacrosPlugin: CompilerPlugin {
-    let providingMacros: [Macro.Type] = [
+    let providingMacros: [any Macro.Type] = [
         DiscoverableMacro.self,
         DiscoverableIgnoredMacro.self,
+        DiscoverableActionMacro.self,
     ]
+}
+
+/// Checks placement only; `@Discoverable` reads the arguments.
+public struct DiscoverableActionMacro: PeerMacro {
+    public static func expansion(
+        of node: AttributeSyntax,
+        providingPeersOf declaration: some DeclSyntaxProtocol,
+        in context: some MacroExpansionContext
+    ) throws -> [DeclSyntax] {
+        guard let function = declaration.as(FunctionDeclSyntax.self),
+            function.modifiers.contains(where: { $0.name.tokenKind == .keyword(.distributed) })
+        else {
+            context.diagnose(Diagnostic(node: node, message: DiscoveryDiagnostic.actionNotDistributedMethod))
+            return []
+        }
+        return []
+    }
 }
 
 public struct DiscoverableIgnoredMacro: PeerMacro {
@@ -80,18 +98,26 @@ public struct DiscoverableMacro: MemberMacro, ExtensionMacro {
                 return
                     "DiscoverableActors.Discovery.\(factory)(\(literal(parameter.key)), description: \(literal(parameter.summary)), type: \(schemaType).self)"
             }
+            let output =
+                action.resultType.map {
+                    "DiscoverableActors.Discovery.resultSchema(for: \($0).self, rel: \(literal(action.rel)))"
+                } ?? "nil"
+            let assignment = """
+                actions[\(literal(action.key))] = DiscoverableActors.ObjectAction(
+                    description: \(literal(action.summary)),
+                    input: DiscoverableActors.Discovery.schema(
+                        description: \(literal(action.summary)),
+                        parameters: [\(parameters.joined(separator: ", "))]
+                    ),
+                    output: \(output),
+                    safe: \(action.isSafe),
+                    idempotent: \(action.isIdempotent)
+                )
+                """
             return conditional(
                 action.condition,
-                around: """
-                    actions[\(literal(action.key))] =DiscoverableActors.ObjectAction(
-                        description: \(literal(action.summary)),
-                        input: DiscoverableActors.Discovery.schema(
-                            description: \(literal(action.summary)),
-                            parameters: [\(parameters.joined(separator: ", "))]
-                        ),
-                        output: \(action.resultType.map { "DiscoverableActors.Discovery.resultSchema(for: \($0).self)" } ?? "nil")
-                    )
-                    """)
+                around: action.availability.map { "if (\($0)) {\n\(assignment)\n}" } ?? assignment
+            )
         }
         let propertyStatements = properties.map { property in
             let schema =
@@ -143,9 +169,15 @@ public struct DiscoverableMacro: MemberMacro, ExtensionMacro {
                 "\(action.isThrowing ? "try " : "")\(action.isAsync ? "await " : "")self.\(action.name)(\(callArguments.joined(separator: ", ")))"
             let body =
                 action.returnsValue
-                ? "return try DiscoverableActors.Discovery.result(\(call), actorSystem: ActorSystem.self)"
+                ? "return try DiscoverableActors.Discovery.result(\(call), actorSystem: ActorSystem.self, rel: \(literal(action.rel)))"
                 : "\(call)\nreturn .json(.null)"
-            return conditional(action.condition, around: "case \(literal(action.key)):\n\(validation)\n\(body)")
+            let availability = action.availability.map {
+                "guard (\($0)) else { throw DiscoverableActors.DiscoveryError.unavailableAction(\(literal(action.key))) }\n"
+            }
+            return conditional(
+                action.condition,
+                around: "case \(literal(action.key)):\n\(availability ?? "")\(validation)\n\(body)"
+            )
         }
 
         let invoke: DeclSyntax = """
@@ -196,10 +228,24 @@ private struct Action {
     let isAsync: Bool
     let isThrowing: Bool
     let resultType: String?
+    /// Link relation of a returned actor.
+    let rel: String
+    let isSafe: Bool
+    let isIdempotent: Bool
+    /// Boolean expression that must hold for the action to be offered.
+    let availability: String?
     let condition: String?
     let branches: [ConditionalBranch]
 
     var returnsValue: Bool { resultType != nil }
+}
+
+/// Hypermedia metadata from `@DiscoverableAction` and documentation callouts.
+private struct ActionMetadata {
+    var rel: String?
+    var safe: Bool?
+    var idempotent: Bool?
+    var availability: String?
 }
 
 private struct Property {
@@ -281,6 +327,7 @@ private func collectActions(in actor: ActorDeclSyntax, context: some MacroExpans
 
         let effects = function.signature.effectSpecifiers
         let returnType = function.signature.returnClause?.type.trimmedDescription
+        let metadata = actionMetadata(for: function, documentation: documentation, context: context)
         actions.append(
             Action(
                 name: name,
@@ -290,12 +337,92 @@ private func collectActions(in actor: ActorDeclSyntax, context: some MacroExpans
                 isAsync: effects?.asyncSpecifier != nil,
                 isThrowing: effects?.throwsClause != nil,
                 resultType: returnType.flatMap { ["Void", "Swift.Void", "()"].contains($0) ? nil : $0 },
+                rel: metadata.rel ?? key,
+                isSafe: metadata.safe ?? false,
+                isIdempotent: metadata.idempotent ?? false,
+                availability: metadata.availability,
                 condition: condition,
                 branches: branches
             )
         )
     }
     return actions
+}
+
+/// Merges `@DiscoverableAction` arguments over documentation callouts.
+private func actionMetadata(
+    for function: FunctionDeclSyntax,
+    documentation: Documentation,
+    context: some MacroExpansionContext
+) -> ActionMetadata {
+    var fromDocumentation = ActionMetadata()
+    fromDocumentation.rel = documentation.callouts["relation"].flatMap { $0.isEmpty ? nil : $0 }
+    for (callout, keyPath) in [("Safe", \ActionMetadata.safe), ("Idempotent", \ActionMetadata.idempotent)] {
+        guard let text = documentation.callouts[callout.lowercased()] else { continue }
+        switch text.lowercased() {
+        case "true": fromDocumentation[keyPath: keyPath] = true
+        case "false": fromDocumentation[keyPath: keyPath] = false
+        default:
+            context.diagnose(
+                Diagnostic(node: function.name, message: DiscoveryDiagnostic.invalidCallout(callout, text)))
+        }
+    }
+
+    var fromAttribute = ActionMetadata()
+    let attribute = function.attributes
+        .first { isAttribute($0, named: "DiscoverableAction") }?
+        .as(AttributeSyntax.self)
+    if case .argumentList(let arguments)? = attribute?.arguments {
+        for argument in arguments {
+            let label = argument.label?.text ?? "_"
+            let expression = argument.expression
+            if expression.is(NilLiteralExprSyntax.self) { continue }
+            switch label {
+            case "rel", "when":
+                guard let text = stringLiteral(expression) else {
+                    context.diagnose(
+                        Diagnostic(node: expression, message: DiscoveryDiagnostic.nonLiteralArgument(label)))
+                    continue
+                }
+                if label == "rel" { fromAttribute.rel = text } else { fromAttribute.availability = text }
+            case "safe", "idempotent":
+                guard let literal = expression.as(BooleanLiteralExprSyntax.self) else {
+                    context.diagnose(
+                        Diagnostic(node: expression, message: DiscoveryDiagnostic.nonLiteralArgument(label)))
+                    continue
+                }
+                let value = literal.literal.tokenKind == .keyword(.true)
+                if label == "safe" { fromAttribute.safe = value } else { fromAttribute.idempotent = value }
+            default:
+                continue
+            }
+        }
+    }
+
+    func conflict<Value: Equatable>(_ argument: String, _ callout: String, _ attribute: Value?, _ doc: Value?) {
+        guard let attribute, let doc, attribute != doc else { return }
+        context.diagnose(
+            Diagnostic(node: function.name, message: DiscoveryDiagnostic.conflictingMetadata(argument, callout)))
+    }
+    conflict("rel", "Relation", fromAttribute.rel, fromDocumentation.rel)
+    conflict("safe", "Safe", fromAttribute.safe, fromDocumentation.safe)
+    conflict("idempotent", "Idempotent", fromAttribute.idempotent, fromDocumentation.idempotent)
+
+    return ActionMetadata(
+        rel: fromAttribute.rel ?? fromDocumentation.rel,
+        safe: fromAttribute.safe ?? fromDocumentation.safe,
+        idempotent: fromAttribute.idempotent ?? fromDocumentation.idempotent,
+        availability: fromAttribute.availability
+    )
+}
+
+/// The text of a string literal without interpolation.
+private func stringLiteral(_ expression: ExprSyntax) -> String? {
+    guard let literal = expression.as(StringLiteralExprSyntax.self),
+        literal.segments.count == 1,
+        case .stringSegment(let segment)? = literal.segments.first
+    else { return nil }
+    return segment.content.text
 }
 
 private func collectProperties(in actor: ActorDeclSyntax) -> [Property] {
@@ -409,10 +536,13 @@ private func literal(_ value: String?) -> String {
 
 // MARK: - Documentation comments
 
-/// The summary and `- Parameter` descriptions from `///` and `/** */` comments.
+/// The summary, `- Parameter` descriptions, and other `- Name: value` callouts
+/// from `///` and `/** */` comments.
 private struct Documentation {
     var summary: String?
     var parameters: [String: String] = [:]
+    /// Single-line callouts keyed by lowercased name, such as `relation` or `safe`.
+    var callouts: [String: String] = [:]
 
     init(_ trivia: Trivia) {
         var summaryLines: [String] = []
@@ -438,10 +568,15 @@ private struct Documentation {
                 parametersListIndent = nil
                 continuing = addParameter(String(line.dropFirst("- parameter ".count))).map { ($0, indent) }
             } else if line.hasPrefix("- ") {
-                // Other callouts (`- Returns:`, `- Throws:`) end the summary.
+                // Other callouts (`- Returns:`, `- Relation:`) end the summary.
                 inCallouts = true
                 parametersListIndent = nil
                 continuing = nil
+                let entry = line.dropFirst(2)
+                if let colon = entry.firstIndex(of: ":") {
+                    let name = entry[..<colon].trimmingCharacters(in: .whitespaces).lowercased()
+                    callouts[name] = entry[entry.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+                }
             } else if !inCallouts {
                 if !line.isEmpty { summaryLines.append(line) }
             } else if let entry = continuing, indent > entry.indent, !line.isEmpty {
@@ -492,6 +627,10 @@ private enum DiscoveryDiagnostic: DiagnosticMessage {
     case generic(String)
     case overloaded(String)
     case reserved(String)
+    case actionNotDistributedMethod
+    case nonLiteralArgument(String)
+    case invalidCallout(String, String)
+    case conflictingMetadata(String, String)
 
     var message: String {
         switch self {
@@ -502,6 +641,12 @@ private enum DiscoveryDiagnostic: DiagnosticMessage {
         case .overloaded(let name):
             "'\(name)' is overloaded; action names must be unique, so mark one @DiscoverableIgnored"
         case .reserved(let name): "'\(name)' is reserved for a generated DiscoverableActors operation"
+        case .actionNotDistributedMethod: "@DiscoverableAction can only be applied to distributed methods"
+        case .nonLiteralArgument(let label): "@DiscoverableAction '\(label)' must be a literal"
+        case .invalidCallout(let name, let value):
+            "'- \(name): \(value)' isn't 'true' or 'false', so it's ignored"
+        case .conflictingMetadata(let argument, let callout):
+            "@DiscoverableAction '\(argument)' overrides the '- \(callout):' documentation callout"
         }
     }
 
@@ -511,6 +656,10 @@ private enum DiscoveryDiagnostic: DiagnosticMessage {
         case .generic: MessageID(domain: "DiscoverableActors", id: "generic")
         case .overloaded: MessageID(domain: "DiscoverableActors", id: "overloaded")
         case .reserved: MessageID(domain: "DiscoverableActors", id: "reserved")
+        case .actionNotDistributedMethod: MessageID(domain: "DiscoverableActors", id: "actionNotDistributedMethod")
+        case .nonLiteralArgument: MessageID(domain: "DiscoverableActors", id: "nonLiteralArgument")
+        case .invalidCallout: MessageID(domain: "DiscoverableActors", id: "invalidCallout")
+        case .conflictingMetadata: MessageID(domain: "DiscoverableActors", id: "conflictingMetadata")
         }
     }
 
@@ -520,6 +669,10 @@ private enum DiscoveryDiagnostic: DiagnosticMessage {
         case .generic: .warning
         case .overloaded: .error
         case .reserved: .error
+        case .actionNotDistributedMethod: .error
+        case .nonLiteralArgument: .error
+        case .invalidCallout: .warning
+        case .conflictingMetadata: .warning
         }
     }
 }
