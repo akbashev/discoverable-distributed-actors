@@ -2,10 +2,10 @@
 
 `DiscoverableActors` gives Swift distributed actors a description that other actors and callers can inspect and use without knowing their concrete Swift type. Its description borrows the `title`, `description`, `properties`, `actions`, and `links` vocabulary from the W3C Thing Description standard. It implements a small subset, not the full standard.
 
-The `@Discoverable` macro generates two distributed methods:
+The `@Discoverable` macro adds these distributed methods:
 
 - `describe()`, which reports public distributed properties and documented actions with input and output schemas.
-- `invoke(_:arguments:)`, which decodes a `JSONValue`, dispatches by action name, and encodes the ordinary Swift return value as `JSONValue`.
+- `invoke(_:arguments:)`, which decodes a `JSONValue`, dispatches by action name, and returns either `.json(JSONValue)` or `.actor(ActorReference)`.
 - `read(property:)`, which reads a distributed property by name and encodes its current value as `JSONValue`.
 
 The package targets macOS 15 and Swift 6.2.
@@ -16,26 +16,59 @@ The package targets macOS 15 and Swift 6.2.
 import DiscoverableActors
 import Distributed
 
+public struct TodoSummary: Codable, Sendable {
+    public var itemCount: Int
+    public var titles: [String]
+
+    public init(itemCount: Int, titles: [String]) {
+        self.itemCount = itemCount
+        self.titles = titles
+    }
+}
+
+/// A snapshot of a to-do list.
+@Discoverable
+public distributed actor TodoArchive {
+    public typealias ActorSystem = LocalTestingDistributedActorSystem
+
+    private let snapshot: TodoSummary
+
+    init(actorSystem: ActorSystem, snapshot: TodoSummary) {
+        self.actorSystem = actorSystem
+        self.snapshot = snapshot
+    }
+
+    /// Return the archived snapshot.
+    public distributed func summary() -> TodoSummary {
+        snapshot
+    }
+}
+
 /// A list of things to do.
 @Discoverable
-distributed actor TodoList {
-    typealias ActorSystem = LocalTestingDistributedActorSystem
+public distributed actor TodoList {
+    public typealias ActorSystem = LocalTestingDistributedActorSystem
 
     private var items: [String] = []
+
+    public init(actorSystem: ActorSystem) {
+        self.actorSystem = actorSystem
+    }
 
     /// Number of items currently in the list.
     public distributed var itemCount: Int { items.count }
 
-    /// Add an item.
-    /// - Parameter title: The item text.
-    public distributed func add(title: String) -> String {
-        items.append(title)
-        return title
+    /// Summarize the list.
+    public distributed func summary() -> TodoSummary {
+        TodoSummary(itemCount: items.count, titles: items)
     }
 
-    /// List all items.
-    public distributed func list() -> [String] {
-        items
+    /// Archive the current list and return the archive actor.
+    public distributed func archive() -> TodoArchive {
+        TodoArchive(
+            actorSystem: actorSystem,
+            snapshot: TodoSummary(itemCount: items.count, titles: items)
+        )
     }
 
     /// Clear the list for local maintenance.
@@ -46,75 +79,35 @@ distributed actor TodoList {
 }
 ```
 
-The generated API can be used without knowing the actor's concrete action methods:
+Calling the method directly keeps its Swift return type. Calling it through `invoke` uses a dynamic result, so the macro encodes ordinary values as `JSONValue`:
 
 ```swift
 let list = TodoList(actorSystem: system)
 let object = try await list.describe()
 
-_ = try await list.invoke("add", arguments: ["title": "Buy milk"])
-let count = try await list.read(property: "itemCount")
-let result = try await list.invoke("list", arguments: nil)
-let items = try result.decode([String].self)
+let typedSummary: TodoSummary = try await list.summary()
+
+let summaryResult: ActionResult = try await list.invoke("summary", arguments: nil)
+guard case .json(let summaryJSON) = summaryResult else {
+    throw DiscoveryError.invalidActionResult
+}
+let summary: TodoSummary = try summaryJSON.decode()
+
+let actorResult = try await list.invoke("archive", arguments: nil)
+guard case .actor(let reference) = actorResult else {
+    throw DiscoveryError.invalidActorReference
+}
+let archive = try reference.resolve(using: system)
+let archivedResult = try await archive.invoke("summary", arguments: nil)
+guard case .json(let archivedJSON) = archivedResult else {
+    throw DiscoveryError.invalidActionResult
+}
+let archivedSummary: TodoSummary = try archivedJSON.decode()
 ```
 
-For the example above, `object` contains this information (shown conceptually):
+`object` is an `ObjectDescription` containing the actor's title, description, property and action schemas, and links. Documentation comments supply descriptions, and `- Parameter` comments supply parameter descriptions.
 
-```swift
-ObjectDescription(
-    title: "TodoList",
-    description: "A list of things to do.",
-    properties: [
-        "itemCount": [
-            "type": "integer",
-            "description": "Number of items currently in the list.",
-            "readOnly": true
-        ]
-    ],
-    actions: [
-        "add": ObjectAction(
-            description: "Add an item.",
-            input: [
-                "type": "object",
-                "properties": [
-                    "title": [
-                        "type": "string",
-                        "description": "The item text."
-                    ]
-                ],
-                "required": ["title"],
-                "additionalProperties": false
-            ],
-            output: ["type": "string"]
-        ),
-        "list": ObjectAction(
-            description: "List all items.",
-            input: nil,
-            output: ["type": "array", "items": ["type": "string"]]
-        )
-    ]
-)
-```
-
-For callers that do not know the concrete actor type, resolve the generated `DiscoverableActor` reference from its distributed ID:
-
-```swift
-let reference = try $DiscoverableActor<LocalTestingDistributedActorSystem>.resolve(
-    id: list.id,
-    using: system
-)
-
-let description = try await reference.describe()
-let count = try await reference.read(property: "itemCount")
-let result = try await reference.invoke("list", arguments: nil)
-let items = try result.decode([String].self)
-```
-
-Actor methods keep their ordinary Swift signatures. Public distributed methods and read-only distributed properties appear in the description by default. Local actor state remains private. Property schemas use the W3C data-schema shape; read current values with `read(property:)`. Use `@DiscoverableIgnored` to omit a distributed property or method. Applying it to an ordinary local property is an error because that property is not distributed. Links use `rel` and `href`, following the standard's link shape. This package describes links but does not assign actor IDs to URIs or implement URI resolution.
-
-The same pattern works with a cluster actor system: the ID can come from another node, while the caller only depends on `DiscoverableActor` and the action schema.
-
-Public `distributed` methods become actions, identified by their method names. Their `///` comments provide descriptions, and `- Parameter` comments provide parameter descriptions. Optional and default-valued parameters are optional in the generated schema. Use `@DiscoverableIgnored` for methods or properties that should remain private to the implementation.
+Actor methods keep their ordinary Swift signatures. Public distributed methods and read-only distributed properties appear in the description by default; use `@DiscoverableIgnored` to omit a distributed declaration. Local state stays private. The description follows the W3C Thing Description vocabulary, but this package implements only a subset and uses its own `ActionResult` envelope. Actor results are supported when returned directly or as an optional; nested actor references, such as arrays of actors, are not.
 
 Types with richer schema information can conform to `JSONSchemaRepresentable`:
 
@@ -129,7 +122,11 @@ enum Priority: String, Codable, JSONSchemaRepresentable {
 }
 ```
 
-`JSONValue` represents JSON-compatible nulls, booleans, numbers, strings, arrays, and objects. Unknown actions, missing required arguments, unexpected argument keys, and invalid argument shapes are reported as `DiscoveryError` values.
+`JSONValue` represents JSON-compatible nulls, booleans, numbers, strings, arrays, and objects. Unknown actions, missing required arguments, unexpected argument keys, invalid argument shapes, and invalid result cases are reported as `DiscoveryError` values.
+
+## Actor systems
+
+`DiscoverableActor` works with actor systems whose serialization requirement is `any Codable` and whose actor IDs are `Codable`. See [docs/actor-systems.md](docs/actor-systems.md) for why, how actor references work, and possible directions.
 
 ## Development
 

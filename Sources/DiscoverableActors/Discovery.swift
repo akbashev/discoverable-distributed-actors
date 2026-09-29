@@ -1,3 +1,5 @@
+import Distributed
+
 /// A type that supplies its own JSON Schema to discovery. Types without one
 /// are described by their structure where it's known (strings, numbers,
 /// arrays, optionals) and otherwise accept any value.
@@ -60,11 +62,9 @@ public enum Discovery {
     public static func optionalParameter<Value: Decodable>(
         _ name: String,
         description: String?,
-        type: Value.Type,
-        allowsNull: Bool = false
+        type: Value.Type
     ) -> Parameter {
-        let valueSchema = allowsNull ? resultSchema(for: type) : schema(for: type)
-        return Parameter(name: name, schema: describing(valueSchema, description), isOptional: true)
+        Parameter(name: name, schema: describing(schema(for: type), description), isOptional: true)
     }
 
     public static func argument<Value: Decodable>(
@@ -99,20 +99,51 @@ public enum Discovery {
 
     public static var void: JSONValue { .null }
 
-    /// The JSON Schema for a return value, including `null` for optional types.
+    /// The JSON Schema for the tagged result returned by `invoke`.
     public static func resultSchema(for type: Any.Type) -> JSONValue {
-        schema(for: type)
+        if type is any DiscoverableActor.Type {
+            return taggedResult("actor", [:])
+        }
+        // `result(_:actorSystem:)` returns a present actor as a reference and `nil` as JSON null.
+        if let optional = type as? any _DiscoveryOptional.Type, optional.wrappedType is any DiscoverableActor.Type {
+            return ["anyOf": [taggedResult("actor", [:]), taggedResult("json", ["type": "null"])]]
+        }
+        return taggedResult("json", schema(for: type))
+    }
+
+    private static func taggedResult(_ kind: String, _ valueSchema: JSONValue) -> JSONValue {
+        [
+            "type": "object",
+            "properties": [kind: valueSchema],
+            "required": .array([.string(kind)]),
+            "additionalProperties": false,
+        ]
     }
 
     /// A W3C-style read-only property affordance with its schema fields at the top level.
     public static func propertySchema(for type: Any.Type, description: String?) -> JSONValue {
-        guard case .object(var property) = resultSchema(for: type) else { return resultSchema(for: type) }
+        guard case .object(var property) = schema(for: type) else { return schema(for: type) }
         if let description { property["description"] = .string(description) }
         property["readOnly"] = .bool(true)
         return .object(property)
     }
 
-    public static func result<Value: Encodable>(_ value: Value) throws -> JSONValue {
+    public static func result<System: DistributedActorSystem<any Codable>, Value: Encodable>(
+        _ value: Value,
+        actorSystem: System.Type
+    ) throws -> ActionResult {
+        if let actor = value as? any DiscoverableActor {
+            guard actor.actorSystem is System,
+                let identifier = actor.id as? any Encodable
+            else {
+                throw DiscoveryError.invalidActorReference
+            }
+            return .actor(ActorReference(identifier: try JSONValue(encoding: identifier)))
+        }
+        return .json(try json(value))
+    }
+
+    public static func json<Value: Encodable>(_ value: Value) throws -> JSONValue {
         try JSONValue(encoding: value)
     }
 

@@ -76,15 +76,14 @@ public struct DiscoverableMacro: MemberMacro, ExtensionMacro {
         let actionStatements = actions.map { action in
             let parameters = action.parameters.map { parameter in
                 let factory = parameter.isOptional || parameter.defaultValue != nil ? "optionalParameter" : "parameter"
-                let nullArgument = factory == "optionalParameter" ? ", allowsNull: \(parameter.isOptional)" : ""
                 let schemaType = parameter.isOptional ? parameter.declaredType : parameter.valueType
                 return
-                    "DiscoverableActors.Discovery.\(factory)(\(literal(parameter.key)), description: \(literal(parameter.summary)), type: \(schemaType).self\(nullArgument))"
+                    "DiscoverableActors.Discovery.\(factory)(\(literal(parameter.key)), description: \(literal(parameter.summary)), type: \(schemaType).self)"
             }
             return conditional(
                 action.condition,
                 around: """
-                    actions[\(literal(action.name))] = DiscoverableActors.ObjectAction(
+                    actions[\(literal(action.key))] =DiscoverableActors.ObjectAction(
                         description: \(literal(action.summary)),
                         input: DiscoverableActors.Discovery.schema(
                             description: \(literal(action.summary)),
@@ -99,7 +98,7 @@ public struct DiscoverableMacro: MemberMacro, ExtensionMacro {
                 property.type.map {
                     "DiscoverableActors.Discovery.propertySchema(for: \($0).self, description: \(literal(property.description)))"
                 } ?? "[:]"
-            return conditional(property.condition, around: "properties[\(literal(property.name))] = \(schema)")
+            return conditional(property.condition, around: "properties[\(literal(property.key))] = \(schema)")
         }
         let propertiesDeclaration =
             propertyStatements.isEmpty
@@ -144,16 +143,16 @@ public struct DiscoverableMacro: MemberMacro, ExtensionMacro {
                 "\(action.isThrowing ? "try " : "")\(action.isAsync ? "await " : "")self.\(action.name)(\(callArguments.joined(separator: ", ")))"
             let body =
                 action.returnsValue
-                ? "return try DiscoverableActors.Discovery.result(\(call))"
-                : "\(call)\nreturn .null"
-            return conditional(action.condition, around: "case \(literal(action.name)):\n\(validation)\n\(body)")
+                ? "return try DiscoverableActors.Discovery.result(\(call), actorSystem: ActorSystem.self)"
+                : "\(call)\nreturn .json(.null)"
+            return conditional(action.condition, around: "case \(literal(action.key)):\n\(validation)\n\(body)")
         }
 
         let invoke: DeclSyntax = """
             public distributed func invoke(
                 _ action: String,
                 arguments: DiscoverableActors.JSONValue
-            ) async throws -> DiscoverableActors.JSONValue {
+            ) async throws -> DiscoverableActors.ActionResult {
                 switch action {
                 \(raw: cases.joined(separator: "\n"))
                 default:
@@ -167,7 +166,7 @@ public struct DiscoverableMacro: MemberMacro, ExtensionMacro {
             conditional(
                 property.condition,
                 around:
-                    "case \(literal(property.name)): return try DiscoverableActors.Discovery.result(self.\(property.name))"
+                    "case \(literal(property.key)): return try DiscoverableActors.Discovery.json(self.\(property.name))"
             )
         }
         let readProperty: DeclSyntax = """
@@ -188,7 +187,10 @@ public struct DiscoverableMacro: MemberMacro, ExtensionMacro {
 // MARK: - Collecting actions
 
 private struct Action {
+    /// The Swift identifier, backticks included, used in generated calls.
     let name: String
+    /// The action name accepted by `invoke`.
+    let key: String
     let summary: String?
     let parameters: [Parameter]
     let isAsync: Bool
@@ -201,7 +203,10 @@ private struct Action {
 }
 
 private struct Property {
+    /// The Swift identifier, backticks included, used in generated reads.
     let name: String
+    /// The property name accepted by `read(property:)`.
+    let key: String
     let type: String?
     let description: String?
     let condition: String?
@@ -241,7 +246,8 @@ private func collectActions(in actor: ActorDeclSyntax, context: some MacroExpans
         else { continue }
 
         let name = function.name.text
-        if reservedNames.contains(name) {
+        let key = unescaped(function.name)
+        if reservedNames.contains(key) {
             context.diagnose(Diagnostic(node: function.name, message: DiscoveryDiagnostic.reserved(name)))
             continue
         }
@@ -251,7 +257,7 @@ private func collectActions(in actor: ActorDeclSyntax, context: some MacroExpans
             continue
         }
         if actions.contains(where: {
-            $0.name == name && !mutuallyExclusive($0.branches, branches)
+            $0.key == key && !mutuallyExclusive($0.branches, branches)
         }) {
             context.diagnose(Diagnostic(node: function.name, message: DiscoveryDiagnostic.overloaded(name)))
             continue
@@ -259,8 +265,8 @@ private func collectActions(in actor: ActorDeclSyntax, context: some MacroExpans
 
         let documentation = Documentation(function.leadingTrivia)
         let parameters = function.signature.parameterClause.parameters.map { parameter in
-            let label = parameter.firstName.text == "_" ? nil : parameter.firstName.text
-            let key = (parameter.secondName ?? parameter.firstName).text
+            let label = parameter.firstName.text == "_" ? nil : callLabel(parameter.firstName)
+            let key = unescaped(parameter.secondName ?? parameter.firstName)
             let (valueType, isOptional) = unwrapOptional(parameter.type)
             return Parameter(
                 label: label,
@@ -278,11 +284,12 @@ private func collectActions(in actor: ActorDeclSyntax, context: some MacroExpans
         actions.append(
             Action(
                 name: name,
+                key: key,
                 summary: documentation.summary,
                 parameters: parameters,
                 isAsync: effects?.asyncSpecifier != nil,
                 isThrowing: effects?.throwsClause != nil,
-                resultType: returnType.flatMap { $0 == "Void" || $0 == "()" ? nil : $0 },
+                resultType: returnType.flatMap { ["Void", "Swift.Void", "()"].contains($0) ? nil : $0 },
                 condition: condition,
                 branches: branches
             )
@@ -307,6 +314,7 @@ private func collectProperties(in actor: ActorDeclSyntax) -> [Property] {
             else { return nil }
             return Property(
                 name: pattern.identifier.text,
+                key: unescaped(pattern.identifier),
                 type: binding.typeAnnotation?.type.trimmedDescription,
                 description: description,
                 condition: condition,
@@ -337,7 +345,7 @@ private func conditionalMembers(
             if clause.poundKeyword.text == "#else" {
                 current = priorConditions.map { "!(\($0))" }.joined(separator: " && ")
             } else {
-                guard let expression = clause.condition?.trimmedDescription else { return [] }
+                guard let expression = clause.condition?.trimmedDescription else { continue }
                 let prefix = priorConditions.map { "!(\($0))" }
                 current = (prefix + ["(\(expression))"]).joined(separator: " && ")
                 priorConditions.append(expression)
@@ -381,6 +389,19 @@ private func unwrapOptional(_ type: TypeSyntax) -> (String, Bool) {
     return (type.trimmedDescription, false)
 }
 
+/// An identifier without the backticks that escape keywords, as callers name it.
+private func unescaped(_ token: TokenSyntax) -> String {
+    let text = token.text
+    guard text.count > 1, text.hasPrefix("`"), text.hasSuffix("`") else { return text }
+    return String(text.dropFirst().dropLast())
+}
+
+/// An argument label as written at a call site, where only a few keywords need escaping.
+private func callLabel(_ token: TokenSyntax) -> String {
+    let name = unescaped(token)
+    return ["inout", "var", "let"].contains(name) ? "`\(name)`" : name
+}
+
 private func literal(_ value: String?) -> String {
     guard let value else { return "nil" }
     return StringLiteralExprSyntax(content: value).description
@@ -388,45 +409,78 @@ private func literal(_ value: String?) -> String {
 
 // MARK: - Documentation comments
 
-/// The summary and `- Parameter` descriptions from `///` comments.
+/// The summary and `- Parameter` descriptions from `///` and `/** */` comments.
 private struct Documentation {
     var summary: String?
     var parameters: [String: String] = [:]
 
     init(_ trivia: Trivia) {
-        let lines = trivia.compactMap { piece -> String? in
-            guard case .docLineComment(let text) = piece else { return nil }
-            return String(text.dropFirst(3)).trimmingCharacters(in: .whitespaces)
-        }
-
         var summaryLines: [String] = []
-        var inParametersList = false
-        for line in lines {
-            if line.hasPrefix("- Parameters:") {
-                inParametersList = true
-            } else if line.hasPrefix("- Parameter ") {
-                inParametersList = false
-                addParameter(String(line.dropFirst("- Parameter ".count)))
-            } else if inParametersList, line.hasPrefix("- ") {
-                addParameter(String(line.dropFirst(2)))
+        // Indentation of an open `- Parameters:` list; its entries are indented further.
+        var parametersListIndent: Int?
+        // The parameter whose description continues on more deeply indented lines.
+        var continuing: (name: String, indent: Int)?
+        var inCallouts = false
+
+        for raw in Self.lines(in: trivia) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            let indent = raw.prefix(while: { $0 == " " || $0 == "\t" }).count
+            let lowercased = line.lowercased()
+
+            if let listIndent = parametersListIndent, indent > listIndent, line.hasPrefix("- ") {
+                continuing = addParameter(String(line.dropFirst(2))).map { ($0, indent) }
+            } else if lowercased.hasPrefix("- parameters:") {
+                inCallouts = true
+                parametersListIndent = indent
+                continuing = nil
+            } else if lowercased.hasPrefix("- parameter ") {
+                inCallouts = true
+                parametersListIndent = nil
+                continuing = addParameter(String(line.dropFirst("- parameter ".count))).map { ($0, indent) }
             } else if line.hasPrefix("- ") {
                 // Other callouts (`- Returns:`, `- Throws:`) end the summary.
-                inParametersList = false
-            } else if !inParametersList, parameters.isEmpty, !line.isEmpty {
-                summaryLines.append(line)
+                inCallouts = true
+                parametersListIndent = nil
+                continuing = nil
+            } else if !inCallouts {
+                if !line.isEmpty { summaryLines.append(line) }
+            } else if let entry = continuing, indent > entry.indent, !line.isEmpty {
+                let previous = parameters[entry.name] ?? ""
+                parameters[entry.name] = previous.isEmpty ? line : "\(previous) \(line)"
+            } else if !line.isEmpty {
+                continuing = nil
             }
         }
 
         let text = summaryLines.joined(separator: " ").trimmingCharacters(in: .whitespaces)
         summary = text.isEmpty ? nil : text
+        parameters = parameters.filter { !$0.value.isEmpty }
     }
 
-    private mutating func addParameter(_ entry: String) {
-        guard let colon = entry.firstIndex(of: ":") else { return }
+    /// Records a `name: description` entry and returns the name, or `nil` if it isn't one.
+    private mutating func addParameter(_ entry: String) -> String? {
+        guard let colon = entry.firstIndex(of: ":") else { return nil }
         let name = entry[..<colon].trimmingCharacters(in: .whitespaces)
-        let text = entry[entry.index(after: colon)...].trimmingCharacters(in: .whitespaces)
-        if !name.isEmpty, !text.isEmpty {
-            parameters[name] = text
+        guard !name.isEmpty else { return nil }
+        parameters[name] = entry[entry.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+        return name
+    }
+
+    /// Comment lines with their markers removed and indentation kept.
+    private static func lines(in trivia: Trivia) -> [Substring] {
+        trivia.flatMap { piece -> [Substring] in
+            switch piece {
+            case .docLineComment(let text):
+                return [text.dropFirst(3)]
+            case .docBlockComment(let text):
+                let body = text.dropFirst(3).dropLast(text.hasSuffix("*/") ? 2 : 0)
+                return body.split(separator: "\n", omittingEmptySubsequences: false).map { line in
+                    let content = line.drop(while: { $0 == " " || $0 == "\t" })
+                    return content.hasPrefix("*") ? content.dropFirst() : line
+                }
+            default:
+                return []
+            }
         }
     }
 }

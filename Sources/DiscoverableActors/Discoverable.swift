@@ -31,8 +31,8 @@ where ActorSystem: DistributedActorSystem<any Codable> {
     /// A Thing Description subset for this actor.
     distributed func describe() async throws -> ObjectDescription
 
-    /// Runs the named action with arguments matching its schema.
-    distributed func invoke(_ action: String, arguments: JSONValue) async throws -> JSONValue
+    /// Runs the named action with arguments matching its schema and returns JSON data or an actor reference.
+    distributed func invoke(_ action: String, arguments: JSONValue) async throws -> ActionResult
 
     /// Reads the named distributed property.
     distributed func read(property name: String) async throws -> JSONValue
@@ -98,10 +98,81 @@ public struct ObjectAction: Codable, Sendable, Equatable {
     }
 }
 
+/// A reference to another discoverable actor.
+///
+/// Resolve it with an actor system compatible with the system that created the
+/// referenced actor.
+public struct ActorReference: Codable, Sendable, Equatable {
+    private let identifier: JSONValue
+
+    init(identifier: JSONValue) {
+        self.identifier = identifier
+    }
+
+    /// Resolves this reference into a dynamically typed discoverable actor.
+    public func resolve<System: DistributedActorSystem<any Codable>>(
+        using system: System
+    ) throws -> $DiscoverableActor<System> where System.ActorID: Decodable {
+        let id = try identifier.decode(System.ActorID.self)
+        return try $DiscoverableActor<System>.resolve(id: id, using: system)
+    }
+}
+
+/// A dynamic action result containing either JSON data or another actor.
+public enum ActionResult: Codable, Sendable, Equatable {
+    case json(JSONValue)
+    case actor(ActorReference)
+
+    private enum CodingKeys: String, CodingKey {
+        case json
+        case actor
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        guard container.allKeys.count == 1 else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .json,
+                in: container,
+                debugDescription: "Expected exactly one action result value."
+            )
+        }
+        if container.contains(.json) {
+            self = .json(try container.decode(JSONValue.self, forKey: .json))
+        } else if container.contains(.actor) {
+            self = .actor(try container.decode(ActorReference.self, forKey: .actor))
+        } else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .json,
+                in: container,
+                debugDescription: "Expected an action result with a 'json' or 'actor' value."
+            )
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .json(let value): try container.encode(value, forKey: .json)
+        case .actor(let reference): try container.encode(reference, forKey: .actor)
+        }
+    }
+
+    /// Decodes a JSON result. Throws if this result is an actor reference.
+    public func decode<Value: Decodable>(_ type: Value.Type = Value.self) throws -> Value {
+        guard case .json(let value) = self else {
+            throw DiscoveryError.invalidActionResult
+        }
+        return try value.decode(type)
+    }
+}
+
 public enum DiscoveryError: Error, Codable, Equatable, Sendable {
     case unknownAction(String)
     case unknownProperty(String)
     case missingArgument(String)
     case unexpectedArgument(String)
     case invalidArguments
+    case invalidActorReference
+    case invalidActionResult
 }

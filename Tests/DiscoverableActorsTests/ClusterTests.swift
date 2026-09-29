@@ -49,6 +49,23 @@ distributed actor Counter {
     }
 }
 
+/// Returns another discoverable actor as an action result.
+@Discoverable
+distributed actor CounterDirectory {
+    typealias ActorSystem = ClusterSystem
+
+    private let counter: Counter
+
+    init(actorSystem: ActorSystem, counter: Counter) {
+        self.counter = counter
+        self.actorSystem = actorSystem
+    }
+
+    public distributed func counterActor() -> Counter {
+        counter
+    }
+}
+
 /// Two joined nodes, shut down when the test ends. They reject unregistered
 /// types, as release builds do, so nothing here relies on debug-only leniency.
 func withTwoNodes(_ body: (ClusterSystem, ClusterSystem) async throws -> Void) async throws {
@@ -81,7 +98,7 @@ struct ClusterTests {
         let object = try $DiscoverableActor<ClusterSystem>.resolve(id: counter.id, using: system)
 
         #expect(try await object.describe().title == "Counter")
-        #expect(try await object.invoke("increment", arguments: ["amount": 2]) == 2)
+        #expect(try await object.invoke("increment", arguments: ["amount": 2]) == .json(2))
     }
 
     @Test
@@ -97,9 +114,31 @@ struct ClusterTests {
                 description.actions["increment"]?.input?["properties"]?["amount"]?["description"] == "How much to add.")
             #expect(description.properties["count"]?["type"] == "integer")
             #expect(try await object.read(property: "count") == 0)
-            #expect(try await object.invoke("increment", arguments: ["amount": 5]) == 5)
+            #expect(try await object.invoke("increment", arguments: ["amount": 5]) == .json(5))
             #expect(try await object.read(property: "count") == 5)
-            #expect(try await object.invoke("increment", arguments: ["amount": 1]) == 6)
+            #expect(try await object.invoke("increment", arguments: ["amount": 1]) == .json(6))
+        }
+    }
+
+    @Test
+    func returnsAndResolvesAnotherDiscoverableActorAcrossNodes() async throws {
+        try await withTwoNodes { first, second in
+            let counter = Counter(actorSystem: first)
+            let directory = CounterDirectory(actorSystem: first, counter: counter)
+            let root = try $DiscoverableActor<ClusterSystem>.resolve(id: directory.id, using: second)
+
+            let description = try await root.describe()
+            #expect(description.actions["counterActor"]?.output?["properties"]?["actor"] != nil)
+
+            let result = try await root.invoke("counterActor", arguments: nil)
+            guard case .actor(let reference) = result else {
+                Issue.record("Expected an actor reference")
+                return
+            }
+            let child = try reference.resolve(using: second)
+
+            #expect(try await child.describe().title == "Counter")
+            #expect(try await child.invoke("increment", arguments: ["amount": 4]) == .json(4))
         }
     }
 
@@ -110,8 +149,8 @@ struct ClusterTests {
             let object = try $DiscoverableActor<ClusterSystem>.resolve(id: counter.id, using: second)
 
             _ = try await object.invoke("increment", arguments: ["amount": 5])
-            #expect(try await object.invoke("reset", arguments: nil) == nil)
-            #expect(try await object.invoke("increment", arguments: ["amount": 1]) == 1)
+            #expect(try await object.invoke("reset", arguments: nil) == .json(nil))
+            #expect(try await object.invoke("increment", arguments: ["amount": 1]) == .json(1))
         }
     }
 

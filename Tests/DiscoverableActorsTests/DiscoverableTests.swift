@@ -106,7 +106,7 @@ struct DiscoverableTests {
         let add = try await action("add", of: list)
         #expect(add.description == "Add an item to the list.")
         #expect(try await action("list", of: list).input == nil)
-        #expect(try await action("list", of: list).output?["type"] == "array")
+        #expect(try await action("list", of: list).output?["properties"]?["json"]?["type"] == "array")
     }
 
     @Test
@@ -146,7 +146,7 @@ struct DiscoverableTests {
     func defaultArgumentsApplyOnlyWhenOmitted() async throws {
         let list = TodoList(actorSystem: system)
 
-        #expect(try await list.invoke("label", arguments: [:]) == "untitled")
+        #expect(try await list.invoke("label", arguments: [:]) == .json("untitled"))
         await #expect(throws: DecodingError.self) {
             try await list.invoke("label", arguments: ["value": nil])
         }
@@ -181,10 +181,10 @@ struct DiscoverableTests {
             ])
 
         let removed = try await list.invoke("remove", arguments: ["index": 0, "reason": nil])
-        #expect(removed == "Buy milk")
+        #expect(removed == .json("Buy milk"))
 
         let added = try await list.invoke("add", arguments: ["title": "Read"])
-        #expect(added == "Read")
+        #expect(added == .json("Read"))
     }
 
     @Test
