@@ -66,6 +66,12 @@ where ActorSystem: DistributedActorSystem<any Codable> {
     distributed func read(property name: String) async throws -> JSONValue
 }
 
+/// Lets a stub be sent and stored like any other actor reference, and used as a
+/// receptionist key's guest type, which a cluster can only replicate for
+/// `Codable` types. The coding is the distributed actor default: the ID.
+extension $DiscoverableActor: Encodable where ActorSystem.ActorID: Encodable {}
+extension $DiscoverableActor: Decodable where ActorSystem.ActorID: Decodable {}
+
 extension DiscoverableActor {
     /// Runs the named action without arguments.
     @discardableResult
