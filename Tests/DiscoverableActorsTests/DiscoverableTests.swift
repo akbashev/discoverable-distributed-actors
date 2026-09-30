@@ -66,12 +66,13 @@ distributed actor TodoList {
 
 }
 
+@Describable
 struct Item: Codable, Equatable {
     var title: String
     var tags: [String]
 }
 
-enum Priority: String, Codable, JSONSchemaRepresentable {
+enum Priority: String, Codable, Describable {
     case low, high
     static var jsonSchema: JSONValue { ["type": "string", "enum": ["low", "high"]] }
 }

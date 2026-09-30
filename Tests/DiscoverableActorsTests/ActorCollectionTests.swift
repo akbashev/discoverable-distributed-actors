@@ -9,6 +9,11 @@ distributed actor Token {
     distributed func check() -> Bool { true }
 }
 
+// Not discoverable, so it opts in to being described as a reference.
+extension Token: Describable {
+    static var jsonSchema: JSONValue { Discovery.actorReferenceSchema }
+}
+
 /// Holds boxes, to pass and return actors inside collections.
 @Discoverable
 distributed actor Pallet {

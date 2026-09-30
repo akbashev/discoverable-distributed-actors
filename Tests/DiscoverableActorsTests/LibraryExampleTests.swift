@@ -7,12 +7,14 @@ import Testing
 // An end-to-end example across two nodes: a lending library whose loans are actors,
 // with inferred schemas, availability conditions, and links in both directions.
 
+@Describable
 struct Book: Codable, Sendable {
     var isbn: String
     var title: String
     var copies: Int
 }
 
+@Describable
 struct BookSummary: Codable, Sendable, Equatable {
     var isbn: String
     var title: String

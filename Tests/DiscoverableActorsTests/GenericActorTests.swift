@@ -4,7 +4,7 @@ import Testing
 
 /// A page of results.
 @Discoverable
-distributed actor Page<Item: Codable & Sendable> {
+distributed actor Page<Item: Codable & Sendable & Describable> {
     typealias ActorSystem = LocalTestingDistributedActorSystem
 
     private var items: [Item]

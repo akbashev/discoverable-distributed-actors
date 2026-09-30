@@ -7,7 +7,7 @@ import SwiftSyntaxMacroExpansion
 import Testing
 
 /// A copy of a book on the shelves.
-@JSONSchema
+@Describable
 struct Copy: Codable {
     /// The book's ISBN.
     var isbn: String
@@ -32,7 +32,7 @@ struct Copy: Codable {
 }
 
 /// How worn a copy is.
-@JSONSchema
+@Describable
 enum Condition: String, Codable {
     /// Never lent.
     case new
@@ -41,7 +41,7 @@ enum Condition: String, Codable {
     case worn = "worn-out"
 }
 
-@JSONSchema
+@Describable
 enum Floor: Int, Codable {
     case basement = -1
     case ground
@@ -50,7 +50,7 @@ enum Floor: Int, Codable {
 }
 
 /// Where a copy is right now.
-@JSONSchema
+@Describable
 enum Location: Codable, Equatable {
     /// On a shelf.
     case shelved(String)
@@ -58,13 +58,13 @@ enum Location: Codable, Equatable {
     case lost
 }
 
-@JSONSchema
+@Describable
 public struct Receipt: Codable {
     public var total: Int
 }
 
 @Suite
-struct JSONSchemaMacroTests {
+struct DescribableMacroTests {
     @Test
     func describesStructuresWithTheirDocComments() {
         #expect(
@@ -140,17 +140,17 @@ struct JSONSchemaMacroTests {
     func rejectsClasses() throws {
         let diagnostics = try expand(
             """
-            @JSONSchema
+            @Describable
             final class Shelf: Codable {}
             """)
-        #expect(diagnostics.map(\.message) == ["@JSONSchema can only be applied to a structure or enumeration"])
+        #expect(diagnostics.map(\.message) == ["@Describable can only be applied to a structure or enumeration"])
     }
 
     @Test
     func warnsAboutPropertiesWithoutTypes() throws {
         let diagnostics = try expand(
             """
-            @JSONSchema
+            @Describable
             struct Shelf: Codable {
                 var count = 0
             }
@@ -165,9 +165,9 @@ struct JSONSchemaMacroTests {
                 (any DeclGroupSyntax).self))
         let attribute = try #require(declaration.attributes.first?.as(AttributeSyntax.self))
         let name = TypeSyntax(IdentifierTypeSyntax(name: .identifier("Shelf")))
-        let conformance = TypeSyntax(IdentifierTypeSyntax(name: .identifier("JSONSchemaRepresentable")))
+        let conformance = TypeSyntax(IdentifierTypeSyntax(name: .identifier("Describable")))
         let context = BasicMacroExpansionContext()
-        _ = try JSONSchemaMacro.expansion(
+        _ = try DescribableMacro.expansion(
             of: attribute,
             attachedTo: declaration,
             providingExtensionsOf: name,
@@ -178,10 +178,10 @@ struct JSONSchemaMacroTests {
     }
 }
 
-// The example in README.md's "Adding descriptions with @JSONSchema" section.
+// The example in README.md's "Adding descriptions with @Describable" section.
 
 /// A copy of a book on the shelves.
-@JSONSchema
+@Describable
 private struct ReadmeCopy: Codable {
     /// Where the copy is shelved, if it has been.
     var shelfmark: String?
@@ -189,7 +189,7 @@ private struct ReadmeCopy: Codable {
     var condition: ReadmeCondition
 }
 
-@JSONSchema
+@Describable
 private enum ReadmeCondition: String, Codable {
     /// Never lent.
     case new

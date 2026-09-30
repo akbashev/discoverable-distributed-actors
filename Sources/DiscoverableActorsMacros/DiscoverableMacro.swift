@@ -16,7 +16,7 @@ struct DiscoverableActorsMacrosPlugin: CompilerPlugin {
         DiscoverableMacro.self,
         DiscoverableIgnoredMacro.self,
         DiscoverableActionMacro.self,
-        JSONSchemaMacro.self,
+        DescribableMacro.self,
     ]
 }
 
@@ -69,9 +69,28 @@ public struct DiscoverableMacro: MemberMacro, ExtensionMacro {
         conformingTo protocols: [TypeSyntax],
         in context: some MacroExpansionContext
     ) throws -> [ExtensionDeclSyntax] {
-        guard !protocols.isEmpty else { return [] }
-        let decl: DeclSyntax = "extension \(type.trimmed): DiscoverableActors.DiscoverableActor {}"
-        return [decl.cast(ExtensionDeclSyntax.self)]
+        let names = Set(protocols.map { $0.trimmedDescription.split(separator: ".").last.map(String.init) ?? "" })
+        var extensions: [ExtensionDeclSyntax] = []
+        if names.contains("DiscoverableActor") {
+            let decl: DeclSyntax = "extension \(type.trimmed): DiscoverableActors.DiscoverableActor {}"
+            extensions.append(decl.cast(ExtensionDeclSyntax.self))
+        }
+        // Signatures using this actor are described as a reference to it.
+        if names.contains("Describable") {
+            let access =
+                declaration.modifiers
+                .first { ["public", "package"].contains($0.name.text) }
+                .map { "\($0.name.text) " } ?? ""
+            let decl: DeclSyntax = """
+                extension \(type.trimmed): DiscoverableActors.Describable {
+                    \(raw: access)static var jsonSchema: DiscoverableActors.JSONValue {
+                        DiscoverableActors._DiscoverySupport.actorReferenceSchema
+                    }
+                }
+                """
+            extensions.append(decl.cast(ExtensionDeclSyntax.self))
+        }
+        return extensions
     }
 
     public static func expansion(
@@ -97,11 +116,11 @@ public struct DiscoverableMacro: MemberMacro, ExtensionMacro {
                 let factory = parameter.isOptional || parameter.defaultValue != nil ? "optionalParameter" : "parameter"
                 let schemaType = parameter.isOptional ? parameter.declaredType : parameter.valueType
                 return
-                    "DiscoverableActors.Discovery.\(factory)(\(literal(parameter.key)), description: \(literal(parameter.summary)), type: \(schemaType).self)"
+                    "DiscoverableActors.Discovery.\(factory)(\(literal(parameter.key)), description: \(literal(parameter.summary)), type: DiscoverableActors._DiscoverySupport.described(\(schemaType).self))"
             }
             let output =
                 action.resultType.map {
-                    "DiscoverableActors.Discovery.schema(for: \($0).self)"
+                    "DiscoverableActors.Discovery.schema(for: DiscoverableActors._DiscoverySupport.described(\($0).self))"
                 } ?? "nil"
             let assignment = """
                 actions[\(literal(action.key))] = DiscoverableActors.ObjectAction(
@@ -123,7 +142,7 @@ public struct DiscoverableMacro: MemberMacro, ExtensionMacro {
         let propertyStatements = properties.map { property in
             let schema =
                 property.type.map {
-                    "DiscoverableActors._DiscoverySupport.propertySchema(for: \($0).self, description: \(literal(property.description)))"
+                    "DiscoverableActors._DiscoverySupport.propertySchema(for: DiscoverableActors._DiscoverySupport.described(\($0).self), description: \(literal(property.description)))"
                 } ?? "[:]"
             return conditional(property.condition, around: "properties[\(literal(property.key))] = \(schema)")
         }

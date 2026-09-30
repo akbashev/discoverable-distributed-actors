@@ -2,23 +2,15 @@ import DiscoverableActors
 import Distributed
 import Testing
 
-/// Stands in for a richer schema source, such as a language-model library's
-/// `Generable`, added from outside the package.
-protocol SchemaFromElsewhere: Decodable {}
-
-struct Point: Codable, SchemaFromElsewhere {
+/// Stands in for a type from another library, with its own schema source.
+struct Point: Codable {
     var x: Int
     var y: Int
 }
 
-extension Discovery {
-    static func parameter<Value: SchemaFromElsewhere>(
-        _ name: String,
-        description: String?,
-        type: Value.Type
-    ) -> Parameter {
-        Parameter(name: name, schema: describing(["x-source": "extension"], description), isOptional: false)
-    }
+// A type from elsewhere joins discovery by conforming, here or in its own module.
+extension Point: Describable {
+    static var jsonSchema: JSONValue { ["x-source": "extension"] }
 }
 
 @Discoverable
@@ -35,7 +27,7 @@ distributed actor Plotter {
 }
 
 @Test
-func moreConstrainedOverloadsFromOtherModulesWin() async throws {
+func typesFromElsewhereConformToJoin() async throws {
     let actions = try await Plotter(actorSystem: LocalTestingDistributedActorSystem()).describe().actions
     let plot = try #require(actions["plot"]?.input)
     let label = try #require(actions["label"]?.input)

@@ -43,6 +43,21 @@ struct JSONValueDecoder {
             }
             return url as! Value
         }
+        if type == Date.self {
+            guard case .string(let text) = value else { throw mismatch(type, value, codingPath) }
+            guard
+                let date = (try? Date(text, strategy: .iso8601))
+                    ?? (try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(text))
+            else {
+                throw DecodingError.dataCorrupted(
+                    .init(
+                        codingPath: codingPath,
+                        debugDescription:
+                            "expected an ISO 8601 date-time, such as 2026-10-01T09:00:00Z, got \"\(text)\""
+                    ))
+            }
+            return date as! Value
+        }
         if type == Decimal.self {
             let decimal: Decimal? =
                 switch value {

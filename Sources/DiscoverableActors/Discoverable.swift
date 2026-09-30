@@ -7,22 +7,21 @@ public import Distributed
 /// Documentation comments supply the descriptions. Use ``DiscoverableIgnored()``
 /// to omit an action or property from discovery.
 @attached(member, names: named(describe), named(invoke), named(read))
-@attached(extension, conformances: DiscoverableActor)
+@attached(extension, conformances: DiscoverableActor, Describable, names: named(jsonSchema))
 public macro Discoverable() = #externalMacro(module: "DiscoverableActorsMacros", type: "DiscoverableMacro")
 
-/// Generates a JSON Schema for a `Codable` structure or enumeration, with
-/// descriptions from its doc comments.
+/// Makes a `Codable` structure or enumeration ``Describable``, with a JSON Schema
+/// generated at compile time and descriptions from its doc comments.
 ///
 /// Structures are described by their stored properties, named by `CodingKeys`
 /// when the type declares them. Enumerations with `String` or integer raw values
 /// list their values; other enumerations are described in the shape synthesized
-/// `Codable` produces. Without the macro, discovery infers schemas from
-/// `init(from:)`, but can't add descriptions, and can't describe enumerations with
-/// associated values, raw-value enumerations that aren't `CaseIterable`, or
-/// structures with a distributed actor in a field.
-@attached(extension, conformances: JSONSchemaRepresentable, names: named(jsonSchema))
-public macro JSONSchema() =
-    #externalMacro(module: "DiscoverableActorsMacros", type: "JSONSchemaMacro")
+/// `Codable` produces. A type used in a discoverable actor's signature must be
+/// describable, so its own structures and enumerations need this macro or a
+/// hand-written conformance.
+@attached(extension, conformances: Describable, names: named(jsonSchema))
+public macro Describable() =
+    #externalMacro(module: "DiscoverableActorsMacros", type: "DescribableMacro")
 
 /// Excludes a public distributed method or property from a ``Discoverable()`` description.
 @attached(peer)

@@ -21,6 +21,11 @@ struct ISBN: Codable {
     }
 }
 
+// Decodes from a single string, so its schema is written by hand.
+extension ISBN: Describable {
+    static var jsonSchema: JSONValue { ["type": "string", "description": "A 13-digit ISBN starting with 978 or 979."] }
+}
+
 /// Takes structured arguments, to check how bad ones are reported.
 @Discoverable
 distributed actor Catalogue {

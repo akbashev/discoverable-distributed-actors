@@ -9,8 +9,9 @@ import Distributed
 /// Encodes `Encodable` values directly to ``JSONValue``, like `JSONEncoder` does to data.
 ///
 /// Distributed actors are written as references, `{"id": …}`, wherever they appear,
-/// including inside structures. `Data`, `URL`, and `Decimal` use the same JSON forms
-/// as `JSONEncoder`'s defaults; everything else follows its own `Codable` conformance.
+/// including inside structures. `Date` is an ISO 8601 string, which callers such as
+/// models can read and write. `Data`, `URL`, and `Decimal` use the same JSON forms as
+/// `JSONEncoder`'s defaults; everything else follows its own `Codable` conformance.
 struct JSONValueEncoder {
     func encode<Value: Encodable>(_ value: Value) throws -> JSONValue {
         let node = EncodingNode()
@@ -37,6 +38,8 @@ struct JSONValueEncoder {
             node.value = .string(data.base64EncodedString())
         } else if let url = value as? URL {
             node.value = .string(url.absoluteString)
+        } else if let date = value as? Date {
+            node.value = .string(Self.iso8601(date))
         } else if let decimal = value as? Decimal {
             node.value = try Self.number(decimal, codingPath: codingPath)
         } else {
@@ -53,6 +56,14 @@ struct JSONValueEncoder {
             try encode(value, into: node, codingPath: codingPath)
         }
         try open(value)
+    }
+
+    /// An ISO 8601 date-time in UTC, with fractional seconds only when there are any.
+    /// Fractions keep milliseconds, so a date with finer precision round-trips to the
+    /// nearest millisecond.
+    static func iso8601(_ date: Date) -> String {
+        let seconds = date.timeIntervalSince1970
+        return date.formatted(Date.ISO8601FormatStyle(includingFractionalSeconds: seconds.rounded(.down) != seconds))
     }
 
     fileprivate static func number<Value: BinaryFloatingPoint>(

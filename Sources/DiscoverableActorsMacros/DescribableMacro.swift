@@ -3,9 +3,9 @@ public import SwiftSyntax
 import SwiftSyntaxBuilder
 public import SwiftSyntaxMacros
 
-/// Generates a `JSONSchemaRepresentable` conformance from a structure's stored
+/// Generates a `Describable` conformance from a structure's stored
 /// properties or an enumeration's cases.
-public struct JSONSchemaMacro: ExtensionMacro {
+public struct DescribableMacro: ExtensionMacro {
     public static func expansion(
         of node: AttributeSyntax,
         attachedTo declaration: some DeclGroupSyntax,
@@ -30,7 +30,7 @@ public struct JSONSchemaMacro: ExtensionMacro {
             .first { ["public", "package"].contains($0.name.text) }
             .map { "\($0.name.text) " } ?? ""
         let decl: DeclSyntax = """
-            extension \(type.trimmed): DiscoverableActors.JSONSchemaRepresentable {
+            extension \(type.trimmed): DiscoverableActors.Describable {
                 \(raw: access)static var jsonSchema: DiscoverableActors.JSONValue {
                     \(raw: schema)
                 }
@@ -92,7 +92,7 @@ private func field(key: String, description: String?, type: TypeSyntax) -> Strin
     let (_, isOptional) = unwrapOptional(type)
     let factory = isOptional ? "optionalParameter" : "parameter"
     return
-        "DiscoverableActors.Discovery.\(factory)(\(literal(key)), description: \(literal(description)), type: (\(type.trimmedDescription)).self)"
+        "DiscoverableActors.Discovery.\(factory)(\(literal(key)), description: \(literal(description)), type: DiscoverableActors._DiscoverySupport.described((\(type.trimmedDescription)).self))"
 }
 
 /// Stored properties, including ones with `willSet` or `didSet` observers.
@@ -207,7 +207,7 @@ private enum SchemaDiagnostic: DiagnosticMessage {
 
     var message: String {
         switch self {
-        case .unsupportedDeclaration: "@JSONSchema can only be applied to a structure or enumeration"
+        case .unsupportedDeclaration: "@Describable can only be applied to a structure or enumeration"
         case .missingType(let name): "'\(name)' has no type annotation, so its schema accepts any value"
         }
     }

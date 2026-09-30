@@ -3,13 +3,8 @@ import Distributed
 import Foundation
 import Testing
 
-struct PlainCrate: Codable {
-    var label: String
-    var box: Box
-}
-
 /// A labelled crate holding a box.
-@JSONSchema
+@Describable
 struct Crate: Codable {
     var label: String
     var box: Box
@@ -33,10 +28,6 @@ distributed actor Dock {
 
     public distributed func firstBox() -> Box {
         box
-    }
-
-    public distributed func plainCrate() -> PlainCrate {
-        PlainCrate(label: "a", box: box)
     }
 
     public distributed func label(_ crate: Crate) -> String {
@@ -111,30 +102,37 @@ struct JSONValueCoderTests {
     }
 
     @Test
-    func inferredStructuresWithActorsAcceptAnyValue() async throws {
-        // Inference can't create a placeholder actor, so the structure isn't described;
-        // its value still uses references.
-        let dock = Dock(actorSystem: system)
-        #expect(try await dock.describe().actions["plainCrate"]?.output == [:])
-        let crate = try await dock.invoke("plainCrate").decode([String: JSONValue].self)
-        #expect(crate["box"]?["id"] != nil)
-    }
-
-    @Test
-    func usesJSONEncoderFormsForFoundationTypes() throws {
+    func foundationTypesUseJSONForms() throws {
         let stamp = Stamp(
             data: Data([1, 2, 3]),
             url: URL(string: "https://example.com/a")!,
             amount: Decimal(string: "12.5")!,
-            when: Date(timeIntervalSinceReferenceDate: 10),
+            when: Date(timeIntervalSince1970: 1_790_000_000),
             note: nil)
         let json = try JSONValue(encoding: stamp)
 
-        #expect(json == ["data": "AQID", "url": "https://example.com/a", "amount": 12.5, "when": 10])
+        // Dates are ISO 8601, which callers such as models can read and write.
+        #expect(
+            json == [
+                "data": "AQID", "url": "https://example.com/a", "amount": 12.5, "when": "2026-09-21T14:13:20Z",
+            ])
         #expect(try json.decode(Stamp.self) == stamp)
-        // The same forms JSONEncoder writes with its default strategies.
-        let viaData = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(stamp))
-        #expect(json == viaData)
+    }
+
+    @Test
+    func datesKeepFractionalSecondsOnlyWhenThereAreAny() throws {
+        let precise = Date(timeIntervalSince1970: 1_790_000_000.25)
+        #expect(try JSONValue(encoding: precise) == "2026-09-21T14:13:20.250Z")
+        #expect(try JSONValue.string("2026-09-21T14:13:20.250Z").decode(Date.self) == precise)
+        let offset = try JSONValue.string("2026-09-21T16:13:20+02:00").decode(Date.self)
+        #expect(offset == Date(timeIntervalSince1970: 1_790_000_000))
+    }
+
+    @Test
+    func invalidDatesExplainTheFormat() {
+        #expect(throws: DecodingError.self) {
+            try JSONValue.string("tomorrow").decode(Date.self)
+        }
     }
 
     @Test

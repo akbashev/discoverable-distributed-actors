@@ -20,13 +20,14 @@ Requires Swift 6.2 and macOS 15, and an actor system whose serialization require
 
 ## Quick start
 
-Write distributed actors as usual, and add `@Discoverable`. Public distributed methods become actions, public distributed properties become read-only properties, and doc comments become descriptions. `@DiscoverableIgnored` hides a public method or property, like `clear()` below, and non-public ones, like `admit`, are never offered. `UserInfo` is a plain `Codable` structure, and its schema is inferred:
+Write distributed actors as usual, and add `@Discoverable`. Public distributed methods become actions, public distributed properties become read-only properties, and doc comments become descriptions. `@DiscoverableIgnored` hides a public method or property, like `clear()` below, and non-public ones, like `admit`, are never offered. `UserInfo` is marked `@Describable`, so callers get its schema:
 
 ```swift
 import DiscoverableActors
 import Distributed
 import DistributedCluster
 
+@Describable
 struct UserInfo: Codable, Sendable {
     var name: String
     var bio: String?
@@ -192,21 +193,21 @@ Argument, result, and property schemas come from the Swift types:
 | `T?` | `{"anyOf": [T, {"type": "null"}]}` |
 | `[T]`, `Set<T>` | `{"type": "array", "items": T}` |
 | `[String: T]` | `{"type": "object", "additionalProperties": T}` |
-| A `String` or `Int` enum that is `CaseIterable` | `{"type": "string", "enum": […]}` |
-| `UUID`, `URL`, `Date`, `Data`, `Decimal` | Their JSON form, such as `{"type": "string", "format": "uuid"}` |
-| A type marked `@JSONSchema` | Generated from its declaration, with its doc comments |
-| Other `Codable` types | Described automatically from their `Codable` conformance |
-| A `JSONSchemaRepresentable` type | Its hand-written `jsonSchema` |
+| `Date` | `{"type": "string", "format": "date-time"}`: ISO 8601, such as `"2026-10-01T09:00:00Z"`, to the millisecond |
+| `UUID`, `URL`, `Data`, `Decimal` | Their JSON form, such as `{"type": "string", "format": "uuid"}` |
+| A type marked `@Describable` | Generated from its declaration, with its doc comments |
+| A hand-written `Describable` conformance | Its `jsonSchema` |
+| A `@Discoverable` actor | A reference, `{"id": …}` |
 
-### Adding descriptions with `@JSONSchema`
+Discovery never runs a type's `init(from:)` to find out its shape: a decoder given made-up values can throw or even crash, and describing an actor must not be able to take down its node. So your own structures and enumerations need `@Describable`, and the compiler says so when one is missing.
 
-Your own `Codable` types are described automatically. A caller learns their field names and types, but not what the fields mean.
+### Describing your types with `@Describable`
 
-To tell it, add `@JSONSchema` and doc comments:
+`@Describable` generates a type's schema from its declaration at compile time: its fields, their types, and its doc comments, which tell a caller what the fields mean:
 
 ```swift
 /// A copy of a book on the shelves.
-@JSONSchema
+@Describable
 struct Copy: Codable {
     /// Where the copy is shelved, if it has been.
     var shelfmark: String?
@@ -214,7 +215,7 @@ struct Copy: Codable {
     var condition: Condition
 }
 
-@JSONSchema
+@Describable
 enum Condition: String, Codable {
     /// Never lent.
     case new
@@ -240,11 +241,9 @@ The doc comments now appear in the schema, for the type, each field, and each ca
 
 This matters most when the caller is an LLM: it picks arguments by what they mean, not just by their types.
 
-`@JSONSchema` is also needed for some types. Automatic descriptions can't handle enums with associated values, enums with raw values that aren't `CaseIterable`, like `Condition` above, or structures with a distributed actor in a field, since inference can't create a placeholder actor. Without the macro, such a type, and any type that contains it, is described as `{}`, which accepts any value.
+To write a schema yourself, conform to `Describable` and implement `static var jsonSchema`.
 
-To write a schema yourself, conform to `JSONSchemaRepresentable` instead.
-
-Other modules can also add more specific overloads of `Discovery.parameter(_:description:type:)`, for example to use schemas from another library.
+Every type in a discoverable actor's signature needs a schema, and the compiler checks it: using a structure without one is a build error at the actor, not a silent `{}` at runtime. The built-in types above, `@Discoverable` actors, and containers of these already have one. A type from another library joins by conforming to `Describable`, and so does a distributed actor that isn't `@Discoverable`, with `Discovery.actorReferenceSchema` as its schema.
 
 Parameters with default values aren't required: omitting one uses the default, while passing `null` for a non-optional parameter is an error. Optional parameters accept `null` or can be left out.
 
@@ -262,7 +261,7 @@ Parameters with default values aren't required: omitting one uses the default, w
 ## Limitations
 
 - Actor systems must use `any Codable` serialization, and returned actors need `Codable` IDs. See [docs/actor-systems.md](docs/actor-systems.md).
-- A structure containing an actor is only described if it's marked `@JSONSchema`, since inference can't create a placeholder actor. Its value still uses references.
+- Every type in a discoverable actor's signature must conform to `Describable`: built-in types and `@Discoverable` actors do, your own structures and enumerations need `@Describable` or a hand-written conformance, and a missing one is a build error. Only `Discovery.schema(for:)`, called directly on a type without a schema, returns `{}`.
 - `invoke` can't return `$DiscoverableActor` directly because of a Swift runtime issue; see [docs/actor-reference-exploration.md](docs/actor-reference-exploration.md).
 - There are no events or subscriptions yet.
 

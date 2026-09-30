@@ -6,6 +6,7 @@ import Testing
 
 // The quick start in README.md, kept here so it stays correct.
 
+@Describable
 struct UserInfo: Codable, Sendable, Equatable {
     var name: String
     var bio: String?
