@@ -58,12 +58,14 @@ struct JSONValueEncoder {
         try open(value)
     }
 
-    /// An ISO 8601 date-time in UTC, with fractional seconds only when there are any.
-    /// Fractions keep milliseconds, so a date with finer precision round-trips to the
+    /// An ISO 8601 date-time with this device's offset, such as `2026-10-01T09:00:00+02:00`,
+    /// so a reader sees the local time a person would say. Fractional seconds appear only
+    /// when there are any; they keep milliseconds, so a finer date round-trips to the
     /// nearest millisecond.
     static func iso8601(_ date: Date) -> String {
         let seconds = date.timeIntervalSince1970
-        return date.formatted(Date.ISO8601FormatStyle(includingFractionalSeconds: seconds.rounded(.down) != seconds))
+        return date.formatted(
+            Date.ISO8601FormatStyle(includingFractionalSeconds: seconds.rounded(.down) != seconds, timeZone: .current))
     }
 
     fileprivate static func number<Value: BinaryFloatingPoint>(

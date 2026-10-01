@@ -33,7 +33,13 @@ extension Float: Describable { public static var jsonSchema: JSONValue { ["type"
 extension Decimal: Describable { public static var jsonSchema: JSONValue { ["type": "number"] } }
 
 extension Date: Describable {
-    public static var jsonSchema: JSONValue { ["type": "string", "format": "date-time"] }
+    public static var jsonSchema: JSONValue {
+        [
+            "type": "string", "format": "date-time",
+            "description":
+                "A date and time, such as 2026-10-01T09:00; without an offset, it's this device's local time.",
+        ]
+    }
 }
 
 extension URL: Describable {

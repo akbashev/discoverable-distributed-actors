@@ -48,12 +48,13 @@ struct JSONValueDecoder {
             guard
                 let date = (try? Date(text, strategy: .iso8601))
                     ?? (try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(text))
+                    ?? Self.localDateTime(text)
             else {
                 throw DecodingError.dataCorrupted(
                     .init(
                         codingPath: codingPath,
                         debugDescription:
-                            "expected an ISO 8601 date-time, such as 2026-10-01T09:00:00Z, got \"\(text)\""
+                            "expected a date and time, such as 2026-10-01T09:00 in this device's time zone, or with an offset, such as \(JSONValueEncoder.iso8601(Date()).prefix(25)); got \"\(text)\""
                     ))
             }
             return date as! Value
@@ -384,5 +385,30 @@ private struct SingleValueDecoding: SingleValueDecodingContainer {
 
     func decode<Value: Decodable>(_ type: Value.Type) throws -> Value {
         try JSONValueDecoder.decode(type, from: value, codingPath: codingPath, actorSystem: actorSystem)
+    }
+}
+
+extension JSONValueDecoder {
+    /// A date and time with no offset, such as `2026-10-01T09:00` or `2026-10-01 09:00:30`,
+    /// read in this device's time zone: ISO 8601 calls a time without an offset local
+    /// time, and it's what a person means by "at nine".
+    static func localDateTime(_ text: String) -> Date? {
+        let parts = text.split(whereSeparator: { $0 == "T" || $0 == " " })
+        guard parts.count == 2 else { return nil }
+        let day = parts[0].split(separator: "-").compactMap { Int($0) }
+        let time = parts[1].split(separator: ":").compactMap { Int($0) }
+        guard day.count == 3, (2...3).contains(time.count),
+            parts[0].split(separator: "-").count == 3, parts[1].split(separator: ":").count == time.count
+        else { return nil }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        let components = DateComponents(
+            year: day[0], month: day[1], day: day[2], hour: time[0], minute: time[1],
+            second: time.count == 3 ? time[2] : 0)
+        guard let date = calendar.date(from: components),
+            calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
+                == DateComponents(year: day[0], month: day[1], day: day[2], hour: time[0], minute: time[1])
+        else { return nil }
+        return date
     }
 }

@@ -111,10 +111,11 @@ struct JSONValueCoderTests {
             note: nil)
         let json = try JSONValue(encoding: stamp)
 
-        // Dates are ISO 8601, which callers such as models can read and write.
+        // Dates are ISO 8601 with this device's offset, which callers such as models can read and write.
         #expect(
             json == [
-                "data": "AQID", "url": "https://example.com/a", "amount": 12.5, "when": "2026-09-21T14:13:20Z",
+                "data": "AQID", "url": "https://example.com/a", "amount": 12.5,
+                "when": .string(stamp.when.formatted(Date.ISO8601FormatStyle(timeZone: .current))),
             ])
         #expect(try json.decode(Stamp.self) == stamp)
     }
@@ -122,16 +123,31 @@ struct JSONValueCoderTests {
     @Test
     func datesKeepFractionalSecondsOnlyWhenThereAreAny() throws {
         let precise = Date(timeIntervalSince1970: 1_790_000_000.25)
-        #expect(try JSONValue(encoding: precise) == "2026-09-21T14:13:20.250Z")
+        #expect(
+            try JSONValue(encoding: precise)
+                == .string(
+                    precise.formatted(Date.ISO8601FormatStyle(includingFractionalSeconds: true, timeZone: .current))))
         #expect(try JSONValue.string("2026-09-21T14:13:20.250Z").decode(Date.self) == precise)
         let offset = try JSONValue.string("2026-09-21T16:13:20+02:00").decode(Date.self)
         #expect(offset == Date(timeIntervalSince1970: 1_790_000_000))
     }
 
     @Test
+    func datesWithoutAnOffsetAreLocalTime() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        let nineFifteen = calendar.date(from: DateComponents(year: 2026, month: 10, day: 1, hour: 9, minute: 15))
+        #expect(try JSONValue.string("2026-10-01T09:15").decode(Date.self) == nineFifteen)
+        #expect(try JSONValue.string("2026-10-01 09:15").decode(Date.self) == nineFifteen)
+        #expect(try JSONValue.string("2026-10-01T09:15:00").decode(Date.self) == nineFifteen)
+    }
+
+    @Test
     func invalidDatesExplainTheFormat() {
-        #expect(throws: DecodingError.self) {
-            try JSONValue.string("tomorrow").decode(Date.self)
+        for text in ["tomorrow", "20:45", "2026-02-30 10:00", "2026-10-01T25:00"] {
+            #expect(throws: DecodingError.self) {
+                try JSONValue.string(text).decode(Date.self)
+            }
         }
     }
 

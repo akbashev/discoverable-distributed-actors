@@ -150,7 +150,7 @@ struct LibraryExampleTests {
             let link = try result.decode(ActorReference.self)
             let loan = try link.resolve(using: system)
 
-            let due = try await loan.read(property: "due")  // "2026-10-13T10:15:00Z"
+            let due = try await loan.read(property: "due")  // "2026-10-13T12:15:00+02:00", in this device's time zone
             try await loan.invoke("renew")
             try await loan.invoke("renew")
             let offered = try await loan.describe().actions.keys.sorted()  // ["giveBack", "library"]: no renewals left
