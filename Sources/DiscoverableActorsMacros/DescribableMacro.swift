@@ -17,9 +17,9 @@ public struct DescribableMacro: ExtensionMacro {
 
         let schema: String
         if let structure = declaration.as(StructDeclSyntax.self) {
-            schema = structSchema(structure, context: context)
+            schema = named(structSchema(structure, context: context), structure.name.text)
         } else if let enumeration = declaration.as(EnumDeclSyntax.self) {
-            schema = enumSchema(enumeration)
+            schema = named(enumSchema(enumeration), enumeration.name.text)
         } else {
             context.diagnose(Diagnostic(node: node, message: SchemaDiagnostic.unsupportedDeclaration))
             return []
@@ -38,6 +38,11 @@ public struct DescribableMacro: ExtensionMacro {
             """
         return [decl.cast(ExtensionDeclSyntax.self)]
     }
+}
+
+/// `schema` as the Swift type `name`: the name code declares it by.
+private func named(_ schema: String, _ name: String) -> String {
+    "DiscoverableActors._DiscoverySupport.named(\(schema), \(literal(name)))"
 }
 
 // MARK: - Structures
@@ -75,7 +80,7 @@ private func structSchema(_ structure: StructDeclSyntax, context: some MacroExpa
                     "DiscoverableActors.Discovery.Parameter(name: \(literal(key)), schema: [:], isOptional: false)")
                 continue
             }
-            fields.append(field(key: key, description: description, type: type))
+            fields.append(field(key: key, description: description, type: type, default: binding.initializer?.value))
         }
     }
 
@@ -88,11 +93,13 @@ private func structSchema(_ structure: StructDeclSyntax, context: some MacroExpa
         """
 }
 
-private func field(key: String, description: String?, type: TypeSyntax) -> String {
+private func field(key: String, description: String?, type: TypeSyntax, default value: ExprSyntax? = nil) -> String {
     let (_, isOptional) = unwrapOptional(type)
     let factory = isOptional ? "optionalParameter" : "parameter"
+    // The default as the declaration writes it, which code reads it as.
+    let swiftDefault = value.map { ", swiftDefault: \(literal($0.trimmedDescription))" } ?? ""
     return
-        "DiscoverableActors.Discovery.\(factory)(\(literal(key)), description: \(literal(description)), type: DiscoverableActors._DiscoverySupport.described((\(type.trimmedDescription)).self))"
+        "DiscoverableActors.Discovery.\(factory)(\(literal(key)), description: \(literal(description)), type: DiscoverableActors._DiscoverySupport.described((\(type.trimmedDescription)).self)\(swiftDefault))"
 }
 
 /// Stored properties, including ones with `willSet` or `didSet` observers.
@@ -149,7 +156,7 @@ private func enumSchema(_ enumeration: EnumDeclSyntax) -> String {
                 next = raw + 1
                 value = ".integer(\(raw))"
             }
-            return "(value: \(value), description: \(literal(description)))"
+            return "(name: \(literal(unescaped(element.name))), value: \(value), description: \(literal(description)))"
         }
         return """
             DiscoverableActors._DiscoverySupport.enumSchema(
@@ -163,7 +170,9 @@ private func enumSchema(_ enumeration: EnumDeclSyntax) -> String {
         let parameters = element.parameterClause.map { Array($0.parameters) } ?? []
         let fields = parameters.enumerated().map { index, parameter in
             let key = parameter.firstName.map(unescaped) ?? "_\(index)"
-            return field(key: key == "_" ? "_\(index)" : key, description: nil, type: parameter.type)
+            return field(
+                key: key == "_" ? "_\(index)" : key, description: nil, type: parameter.type,
+                default: parameter.defaultValue?.value)
         }
         return
             "(name: \(literal(unescaped(element.name))), description: \(literal(caseDescription)), fields: [\(fields.joined(separator: ", "))])"

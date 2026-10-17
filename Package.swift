@@ -18,9 +18,15 @@ let package = Package(
     products: [
         .library(name: "DiscoverableActors", targets: ["DiscoverableActors"])
     ],
+    traits: [
+        .trait(
+            name: "ClusterSystem",
+            description: "Adds DiscoveryPlugin, so discovery JSON carries a ClusterSystem's actor IDs in full."
+        )
+    ],
     dependencies: [
         .package(url: "https://github.com/swiftlang/swift-syntax.git", "509.0.0"..<"605.0.0"),
-        // Tests only: a real multi-node actor system, and its logging settings.
+        // The ClusterSystem trait's plugin, and tests: a real multi-node actor system.
         .package(url: "https://github.com/apple/swift-distributed-actors.git", branch: "main"),
         .package(url: "https://github.com/apple/swift-log", from: "1.0.0"),
     ],
@@ -39,7 +45,10 @@ let package = Package(
         .target(
             name: "DiscoverableActors",
             dependencies: [
-                "DiscoverableActorsMacros"
+                "DiscoverableActorsMacros",
+                .product(
+                    name: "DistributedCluster", package: "swift-distributed-actors",
+                    condition: .when(traits: ["ClusterSystem"])),
             ],
             swiftSettings: upcomingFeatures + [.strictMemorySafety()]
         ),

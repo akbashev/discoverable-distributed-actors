@@ -26,6 +26,10 @@ struct JSONValueEncoder {
     ) throws {
         if let json = value as? JSONValue {
             node.value = json
+        } else if let actor = value as? any DistributedActor, let id = try ActorIDCodings.encodeID(of: actor) {
+            let idNode = EncodingNode()
+            idNode.value = id
+            node.fields = ["id": idNode]
         } else if let actor = value as? any DistributedActor {
             guard let id = actor.id as? any Encodable else {
                 throw EncodingError.invalidValue(

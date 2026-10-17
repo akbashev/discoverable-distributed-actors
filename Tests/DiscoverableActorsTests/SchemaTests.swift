@@ -49,7 +49,10 @@ struct SchemaTests {
     @Test
     func enumerationsAreDescribedByTheirOwnSchema() {
         #expect(Discovery.schema(for: Genre.self) == [:])
-        #expect(Discovery.schema(for: Rank.self) == ["type": "integer", "enum": [1, 5]])
+        #expect(
+            Discovery.schema(for: Rank.self) == [
+                "type": "integer", "enum": [1, 5], "title": "Rank", "x-enum-varnames": ["low", "high"],
+            ])
     }
 
     @Test

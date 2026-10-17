@@ -70,6 +70,8 @@ struct DescribableMacroTests {
         #expect(
             Copy.jsonSchema == [
                 "type": "object",
+                "title": "Copy",
+                "x-order": ["isbn", "shelf_mark", "condition", "loans"],
                 "description": "A copy of a book on the shelves.",
                 "properties": [
                     "isbn": ["type": "string", "description": "The book's ISBN."],
@@ -79,6 +81,8 @@ struct DescribableMacroTests {
                     ],
                     "condition": [
                         "type": "string",
+                        "title": "Condition",
+                        "x-enum-varnames": ["new", "good", "worn"],
                         "description": "The copy's physical condition.",
                         "oneOf": [
                             ["const": "new", "description": "Never lent."],
@@ -94,7 +98,11 @@ struct DescribableMacroTests {
 
     @Test
     func listsIntegerRawValues() {
-        #expect(Floor.jsonSchema == ["type": "integer", "enum": [-1, 0, 1, 5]])
+        #expect(
+            Floor.jsonSchema == [
+                "type": "integer", "enum": [-1, 0, 1, 5], "title": "Floor",
+                "x-enum-varnames": ["basement", "ground", "first", "top"],
+            ])
     }
 
     @Test
@@ -111,6 +119,7 @@ struct DescribableMacroTests {
                 "description": "On a shelf.",
                 "properties": ["_0": ["type": "string"]],
                 "required": ["_0"],
+                "x-order": ["_0"],
             ])
         #expect(
             options[1]["properties"]?["lent"] == [
@@ -120,8 +129,10 @@ struct DescribableMacroTests {
                     "days": ["anyOf": [["type": "integer"], ["type": "null"]]],
                 ],
                 "required": ["to"],
+                "x-order": ["to", "days"],
             ])
-        #expect(options[2]["properties"]?["lost"] == ["type": "object", "properties": [:], "required": []])
+        #expect(
+            options[2]["properties"]?["lost"] == ["type": "object", "properties": [:], "required": [], "x-order": []])
 
         // The shape matches what synthesized Codable produces.
         #expect(try JSONValue(encoding: Location.shelved("A1")) == ["shelved": ["_0": "A1"]])
@@ -214,6 +225,8 @@ func readmeComparisonOfInferredAndGeneratedSchemas() {
     #expect(
         Discovery.schema(for: ReadmeCopy.self) == [
             "type": "object",
+            "title": "ReadmeCopy",
+            "x-order": ["shelfmark", "condition"],
             "description": "A copy of a book on the shelves.",
             "properties": [
                 "shelfmark": [
@@ -222,6 +235,8 @@ func readmeComparisonOfInferredAndGeneratedSchemas() {
                 ],
                 "condition": [
                     "type": "string",
+                    "title": "ReadmeCondition",
+                    "x-enum-varnames": ["new", "good", "worn"],
                     "description": "The copy's physical condition.",
                     "oneOf": [
                         ["const": "new", "description": "Never lent."],

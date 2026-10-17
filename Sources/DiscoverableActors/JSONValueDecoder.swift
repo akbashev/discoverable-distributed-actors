@@ -87,11 +87,42 @@ struct JSONValueDecoder {
                 throw DecodingError.dataCorrupted(
                     .init(codingPath: codingPath, debugDescription: #"expected object with "id", got \#(value.kind)"#))
             }
+            if let actorSystem, let coding = ActorIDCodings.coding(for: actorSystem) {
+                return try resolve(type, id: coding.decode(id), using: actorSystem, codingPath: codingPath)
+            }
             let decoder = ValueDecoder(
                 value: id, codingPath: codingPath + [AnyCodingKey("id")], actorSystem: actorSystem)
             return try Value(from: decoder)
         }
         return try Value(from: ValueDecoder(value: value, codingPath: codingPath, actorSystem: actorSystem))
+    }
+
+    /// Resolves an actor of `type` from an ID its system's coding has already read.
+    private static func resolve<Value>(
+        _ type: Value.Type,
+        id: any Sendable,
+        using actorSystem: any DistributedActorSystem,
+        codingPath: [any CodingKey]
+    ) throws -> Value {
+        func open<Actor: DistributedActor>(_: Actor.Type) throws -> Actor {
+            guard let id = id as? Actor.ID, let system = actorSystem as? Actor.ActorSystem else {
+                throw DecodingError.dataCorrupted(
+                    .init(
+                        codingPath: codingPath,
+                        debugDescription: "The reference isn't to a \(Actor.self) in this actor system."))
+            }
+            return try Actor.resolve(id: id, using: system)
+        }
+        guard let actorType = type as? any DistributedActor.Type else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: codingPath, debugDescription: "\(type) isn't a distributed actor."))
+        }
+        let actor: any DistributedActor = try open(actorType)
+        guard let value = actor as? Value else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: codingPath, debugDescription: "\(actor) isn't a \(type)."))
+        }
+        return value
     }
 
     fileprivate static func mismatch(

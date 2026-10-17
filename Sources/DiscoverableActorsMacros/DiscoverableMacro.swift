@@ -84,7 +84,7 @@ public struct DiscoverableMacro: MemberMacro, ExtensionMacro {
             let decl: DeclSyntax = """
                 extension \(type.trimmed): DiscoverableActors.Describable {
                     \(raw: access)static var jsonSchema: DiscoverableActors.JSONValue {
-                        DiscoverableActors._DiscoverySupport.actorReferenceSchema
+                        DiscoverableActors._DiscoverySupport.named(DiscoverableActors._DiscoverySupport.actorReferenceSchema, \(literal: type.trimmedDescription))
                     }
                 }
                 """
@@ -106,6 +106,7 @@ public struct DiscoverableMacro: MemberMacro, ExtensionMacro {
             return []
         }
 
+        let events = collectEvents(from: node, context: context)
         let actions = collectActions(in: actor, context: context)
         let properties = collectProperties(in: actor)
         let title = actor.name.text
@@ -131,7 +132,8 @@ public struct DiscoverableMacro: MemberMacro, ExtensionMacro {
                     ),
                     output: \(output),
                     safe: \(action.isSafe),
-                    idempotent: \(action.isIdempotent)
+                    idempotent: \(action.isIdempotent),
+                    effects: [\([action.isAsync ? ".async" : nil, action.isThrowing ? ".throws" : nil].compactMap { $0 }.joined(separator: ", "))]
                 )
                 """
             return conditional(
@@ -154,6 +156,13 @@ public struct DiscoverableMacro: MemberMacro, ExtensionMacro {
             actionStatements.isEmpty
             ? "let actions: [String: DiscoverableActors.ObjectAction] = [:]"
             : "var actions: [String: DiscoverableActors.ObjectAction] = [:]"
+        let eventStatements = events.map { event in
+            "events[\(literal(event.name))] = DiscoverableActors._DiscoverySupport.event(DiscoverableActors._DiscoverySupport.described(\(event.type).self))"
+        }
+        let eventsDeclaration =
+            eventStatements.isEmpty
+            ? "let events: [String: DiscoverableActors.ObjectEvent] = [:]"
+            : "var events: [String: DiscoverableActors.ObjectEvent] = [:]"
 
         var generated: [DeclSyntax] = []
         let describe: DeclSyntax = """
@@ -162,11 +171,14 @@ public struct DiscoverableMacro: MemberMacro, ExtensionMacro {
                 \(raw: propertyStatements.joined(separator: "\n"))
                 \(raw: actionsDeclaration)
                 \(raw: actionStatements.joined(separator: "\n"))
+                \(raw: eventsDeclaration)
+                \(raw: eventStatements.joined(separator: "\n"))
                 return DiscoverableActors.ObjectDescription(
                     title: \(raw: literal(title)),
                     description: \(raw: literal(description)),
                     properties: properties,
-                    actions: actions
+                    actions: actions,
+                    events: events
                 )
             }
             """
@@ -234,8 +246,96 @@ public struct DiscoverableMacro: MemberMacro, ExtensionMacro {
             """
         generated.append(readProperty)
 
+        generated += eventMembers(events)
+
         return generated
     }
+
+    /// Subscribing and unsubscribing, plus, for actors with events, the subscriber list and
+    /// an `announce(_:)` for each event type.
+    private static func eventMembers(_ events: [Event]) -> [DeclSyntax] {
+        guard !events.isEmpty else {
+            return [
+                """
+                public distributed func _subscribe(_ subscriber: DiscoverableActors._SubscriberID, to event: String) async throws {
+                    throw DiscoverableActors.DiscoveryError.unknownEvent(event)
+                }
+                """,
+                """
+                public distributed func _nextEvent(for subscriber: DiscoverableActors._SubscriberID) async throws
+                    -> DiscoverableActors._EventDelivery
+                {
+                    .ended
+                }
+                """,
+                """
+                public distributed func _unsubscribe(_ subscriber: DiscoverableActors._SubscriberID) async throws {}
+                """,
+            ]
+        }
+        let names = events.map { literal($0.name) }.joined(separator: ", ")
+        var members: [DeclSyntax] = [
+            "private let _discoverableEvents = DiscoverableActors._DiscoveryEventHub(events: [\(raw: names)])",
+            """
+            public distributed func _subscribe(_ subscriber: DiscoverableActors._SubscriberID, to event: String) async throws {
+                try self._discoverableEvents.subscribe(subscriber, to: event)
+            }
+            """,
+            """
+            public distributed func _nextEvent(for subscriber: DiscoverableActors._SubscriberID) async throws
+                -> DiscoverableActors._EventDelivery
+            {
+                await self._discoverableEvents.next(for: subscriber)
+            }
+            """,
+            """
+            public distributed func _unsubscribe(_ subscriber: DiscoverableActors._SubscriberID) async throws {
+                self._discoverableEvents.unsubscribe(subscriber)
+            }
+            """,
+        ]
+        for event in events {
+            members.append(
+                """
+                /// Tells every subscriber of `\(raw: event.name)`.
+                func announce(_ event: \(raw: event.type)) async {
+                    self._discoverableEvents.announce(event, named: \(raw: literal(event.name)))
+                }
+                """)
+        }
+        return members
+    }
+}
+
+// MARK: - Collecting events
+
+private struct Event {
+    /// The type as written, such as `Shop.RefundRequested`.
+    let type: String
+    /// The event's name: the type's own name, such as `RefundRequested`.
+    let name: String
+}
+
+/// The types listed in `@Discoverable(events: …)`, each written as `Type.self`.
+private func collectEvents(from node: AttributeSyntax, context: some MacroExpansionContext) -> [Event] {
+    guard case .argumentList(let arguments)? = node.arguments else { return [] }
+    var events: [Event] = []
+    for argument in arguments {
+        guard let access = argument.expression.as(MemberAccessExprSyntax.self),
+            access.declName.baseName.text == "self", let base = access.base
+        else {
+            context.diagnose(Diagnostic(node: argument.expression, message: DiscoveryDiagnostic.eventNotType))
+            continue
+        }
+        let type = base.trimmedDescription
+        let name = type.split(separator: ".").last.map(String.init) ?? type
+        if events.contains(where: { $0.name == name }) {
+            context.diagnose(Diagnostic(node: argument.expression, message: DiscoveryDiagnostic.duplicateEvent(name)))
+            continue
+        }
+        events.append(Event(type: type, name: name))
+    }
+    return events
 }
 
 // MARK: - Collecting actions
@@ -296,7 +396,7 @@ private struct Parameter {
     let defaultValue: String?
 }
 
-private let reservedNames: Set<String> = ["describe", "invoke", "read"]
+private let reservedNames: Set<String> = ["describe", "invoke", "read", "_subscribe", "_nextEvent", "_unsubscribe"]
 
 private func collectActions(in actor: ActorDeclSyntax, context: some MacroExpansionContext) -> [Action] {
     var actions: [Action] = []
@@ -646,6 +746,8 @@ private enum DiscoveryDiagnostic: DiagnosticMessage {
     case nonLiteralArgument(String)
     case invalidCallout(String, String)
     case conflictingMetadata(String, String)
+    case eventNotType
+    case duplicateEvent(String)
 
     var message: String {
         switch self {
@@ -662,6 +764,10 @@ private enum DiscoveryDiagnostic: DiagnosticMessage {
             "'- \(name): \(value)' isn't 'true' or 'false', so it's ignored"
         case .conflictingMetadata(let argument, let callout):
             "@DiscoverableAction '\(argument)' overrides the '- \(callout):' documentation callout"
+        case .eventNotType:
+            "Events are listed as types, such as `events: RefundRequested.self`"
+        case .duplicateEvent(let name):
+            "'\(name)' is listed twice; event names must be unique"
         }
     }
 
@@ -675,6 +781,8 @@ private enum DiscoveryDiagnostic: DiagnosticMessage {
         case .nonLiteralArgument: MessageID(domain: "DiscoverableActors", id: "nonLiteralArgument")
         case .invalidCallout: MessageID(domain: "DiscoverableActors", id: "invalidCallout")
         case .conflictingMetadata: MessageID(domain: "DiscoverableActors", id: "conflictingMetadata")
+        case .eventNotType: MessageID(domain: "DiscoverableActors", id: "eventNotType")
+        case .duplicateEvent: MessageID(domain: "DiscoverableActors", id: "duplicateEvent")
         }
     }
 
@@ -688,6 +796,8 @@ private enum DiscoveryDiagnostic: DiagnosticMessage {
         case .nonLiteralArgument: .error
         case .invalidCallout: .warning
         case .conflictingMetadata: .warning
+        case .eventNotType: .error
+        case .duplicateEvent: .error
         }
     }
 }

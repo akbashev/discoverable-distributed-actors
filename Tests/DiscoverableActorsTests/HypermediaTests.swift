@@ -77,6 +77,7 @@ struct HypermediaTests {
         #expect(
             addOutput == [
                 "type": "object", "properties": ["id": [:]], "required": ["id"], "x-actor-reference": true,
+                "title": "Box",
             ])
 
         let added = try await shelf.invoke("add", arguments: nil).decode(ActorReference.self)

@@ -97,6 +97,8 @@ struct QuickStartTests {
             #expect(
                 try await user.describe().properties["info"] == [
                     "type": "object",
+                    "title": "UserInfo",
+                    "x-order": ["name", "bio"],
                     "description": "Who the user is.",
                     "readOnly": true,
                     "properties": [

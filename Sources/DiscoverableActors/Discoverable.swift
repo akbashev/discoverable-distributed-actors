@@ -1,14 +1,33 @@
 public import Distributed
 
+public import struct Foundation.UUID
+
 /// Makes a distributed actor discoverable: every `public distributed func`
 /// becomes an action that a caller can find through `describe()` and run
 /// through `invoke(_:arguments:)`, without knowing the actor's Swift type.
 ///
 /// Documentation comments supply the descriptions. Use ``DiscoverableIgnored()``
 /// to omit an action or property from discovery.
-@attached(member, names: named(describe), named(invoke), named(read))
+@attached(
+    member,
+    names: named(describe), named(invoke), named(read), named(_subscribe), named(_nextEvent), named(_unsubscribe))
 @attached(extension, conformances: DiscoverableActor, Describable, names: named(jsonSchema))
 public macro Discoverable() = #externalMacro(module: "DiscoverableActorsMacros", type: "DiscoverableMacro")
+
+/// Makes a distributed actor discoverable, with the events it can announce.
+///
+/// Each event is a ``Describable`` type, such as `RefundRequested`: its name is the
+/// event's name, its doc comment the event's description, and its schema the data
+/// listeners receive. The macro generates `announce(_:)` for each of them; call it to
+/// tell every subscribed listener. Listeners subscribe with
+/// ``DiscoverableActor/subscribe(to:)``.
+@attached(
+    member,
+    names: named(describe), named(invoke), named(read), named(_subscribe), named(_nextEvent), named(_unsubscribe),
+    named(announce), named(_discoverableEvents))
+@attached(extension, conformances: DiscoverableActor, Describable, names: named(jsonSchema))
+public macro Discoverable(events: Any.Type...) =
+    #externalMacro(module: "DiscoverableActorsMacros", type: "DiscoverableMacro")
 
 /// Makes a `Codable` structure or enumeration ``Describable``, with a JSON Schema
 /// generated at compile time and descriptions from its doc comments.
@@ -63,6 +82,16 @@ where ActorSystem: DistributedActorSystem<any Codable> {
 
     /// Reads the named distributed property.
     distributed func read(property name: String) async throws -> JSONValue
+
+    /// Registers `subscriber` for `event`. Plumbing behind ``DiscoverableActor/subscribe(to:)``,
+    /// which is what to call; `@Discoverable` generates it.
+    distributed func _subscribe(_ subscriber: UUID, to event: String) async throws
+
+    /// The subscriber's next event, waiting briefly for one. Plumbing behind ``DiscoverableActor/subscribe(to:)``.
+    distributed func _nextEvent(for subscriber: UUID) async throws -> _EventDelivery
+
+    /// Ends `subscriber`'s subscription. Plumbing behind ``DiscoverableActor/subscribe(to:)``.
+    distributed func _unsubscribe(_ subscriber: UUID) async throws
 }
 
 /// Lets a stub be sent and stored like any other actor reference, and used as a
@@ -82,10 +111,14 @@ extension DiscoverableActor {
     ///
     /// Distributed actors in the result, whether returned directly or inside a value,
     /// are resolved with this actor's system.
+    ///
+    /// `as` is required on purpose: with a default, `invoke(_:arguments:)` would match this
+    /// method too, and an actor's synthesized distributed thunk for a sync `invoke` resolves
+    /// to it instead, recursing forever (https://github.com/swiftlang/swift/issues/92795).
     public nonisolated func invoke<Value: Decodable>(
         _ action: String,
         arguments: JSONValue = nil,
-        as type: Value.Type = Value.self
+        as type: Value.Type
     ) async throws -> Value {
         let json = try await invoke(action, arguments: arguments)
         return try JSONValueDecoder(actorSystem: actorSystem).decode(type, from: json)
@@ -101,17 +134,56 @@ public struct ObjectDescription: Codable, Sendable, Equatable {
     /// Action affordances keyed by the method name accepted by `invoke`. Actions that are
     /// unavailable in the actor's current state are omitted.
     public var actions: [String: ObjectAction]
+    /// Event affordances keyed by the event type's name.
+    public var events: [String: ObjectEvent]
 
     public init(
         title: String,
         description: String?,
         properties: [String: JSONValue] = [:],
-        actions: [String: ObjectAction]
+        actions: [String: ObjectAction],
+        events: [String: ObjectEvent] = [:]
     ) {
         self.title = title
         self.description = description
         self.properties = properties
         self.actions = actions
+        self.events = events
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case title, description, properties, actions, events
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        title = try container.decode(String.self, forKey: .title)
+        description = try container.decodeIfPresent(String.self, forKey: .description)
+        properties = try container.decode([String: JSONValue].self, forKey: .properties)
+        actions = try container.decode([String: ObjectAction].self, forKey: .actions)
+        // A Thing Description leaves out `events` when there are none.
+        events = try container.decodeIfPresent([String: ObjectEvent].self, forKey: .events) ?? [:]
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(title, forKey: .title)
+        try container.encodeIfPresent(description, forKey: .description)
+        try container.encode(properties, forKey: .properties)
+        try container.encode(actions, forKey: .actions)
+        if !events.isEmpty { try container.encode(events, forKey: .events) }
+    }
+}
+
+/// An event affordance: something the actor announces, with the data listeners receive.
+public struct ObjectEvent: Codable, Sendable, Equatable {
+    public var description: String?
+    /// JSON Schema for the event's data.
+    public var data: JSONValue
+
+    public init(description: String?, data: JSONValue) {
+        self.description = description
+        self.data = data
     }
 }
 
@@ -126,23 +198,34 @@ public struct ObjectAction: Codable, Sendable, Equatable {
     public var safe: Bool
     /// Whether repeating the action with the same arguments has no further effect.
     public var idempotent: Bool
+    /// What its function's declaration says it may do besides return, as Swift writes it: wait,
+    /// and throw.
+    public var effects: [Effect]
+
+    /// An effect a function declares: `async`, `throws`.
+    public enum Effect: String, Codable, Sendable, Equatable {
+        case async
+        case `throws`
+    }
 
     public init(
         description: String?,
         input: JSONValue?,
         output: JSONValue? = nil,
         safe: Bool = false,
-        idempotent: Bool = false
+        idempotent: Bool = false,
+        effects: [Effect] = []
     ) {
         self.description = description
         self.input = input
         self.output = output
         self.safe = safe
         self.idempotent = idempotent
+        self.effects = effects
     }
 
     private enum CodingKeys: String, CodingKey {
-        case description, input, output, safe, idempotent
+        case description, input, output, safe, idempotent, effects
     }
 
     public init(from decoder: any Decoder) throws {
@@ -153,6 +236,8 @@ public struct ObjectAction: Codable, Sendable, Equatable {
         // Thing Description defaults both to false when absent.
         safe = try container.decodeIfPresent(Bool.self, forKey: .safe) ?? false
         idempotent = try container.decodeIfPresent(Bool.self, forKey: .idempotent) ?? false
+        // A function declaring none is a plain one.
+        effects = try container.decodeIfPresent([Effect].self, forKey: .effects) ?? []
     }
 }
 
@@ -174,7 +259,7 @@ public struct ActorReference: Codable, Sendable, Equatable {
 
     /// A reference to `actor`, to pass as an argument to an action that takes an actor.
     public init<Actor: DistributedActor>(_ actor: Actor) throws where Actor.ID: Encodable {
-        self.init(identifier: try JSONValue(encoding: actor.id))
+        self.init(identifier: try ActorIDCodings.encodeID(of: actor) ?? JSONValue(encoding: actor.id))
     }
 
     /// Resolves this reference into a dynamically typed discoverable actor.
@@ -188,7 +273,10 @@ public struct ActorReference: Codable, Sendable, Equatable {
     public func actorID<System: DistributedActorSystem>(
         using system: System
     ) throws -> System.ActorID where System.ActorID: Decodable {
-        try identifier.decode(System.ActorID.self)
+        if let coding = ActorIDCodings.coding(for: system), let id = try coding.decode(identifier) as? System.ActorID {
+            return id
+        }
+        return try identifier.decode(System.ActorID.self)
     }
 }
 
@@ -211,4 +299,16 @@ public enum DiscoveryError: Error, Codable, Equatable, Sendable {
     /// such as `expected integer, got string`. `name` is `arguments` when the
     /// arguments as a whole aren't a JSON object.
     case invalidArgument(name: String, reason: String)
+    /// The actor doesn't announce an event by this name.
+    case unknownEvent(String)
+    /// A listener can't receive an event through `action`. `reason` says why, such as
+    /// that it has no such action, or that the action doesn't take exactly one argument.
+}
+
+/// Any discoverable actor in a signature, such as a `replyTo:` parameter, is described like a
+/// concrete one: as a reference, `{"id": …}`.
+extension $DiscoverableActor: Describable {
+    public static var jsonSchema: JSONValue {
+        _DiscoverySupport.actorReferenceSchema
+    }
 }

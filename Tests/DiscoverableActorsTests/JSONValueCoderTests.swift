@@ -83,9 +83,10 @@ struct JSONValueCoderTests {
         #expect(box.id == crate.box.id)
         #expect(try await box.describe().title == "Box")
 
-        // The type can also come from context.
-        let inferred: Crate = try await dock.invoke("crate")
-        #expect(inferred.box.id == crate.box.id)
+        // The type is always named: inferring it from context would also make
+        // `invoke(_:arguments:)` match the typed overload (see its documentation).
+        let named = try await dock.invoke("crate", as: Crate.self)
+        #expect(named.box.id == crate.box.id)
     }
 
     @Test
