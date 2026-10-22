@@ -63,8 +63,23 @@ public struct Receipt: Codable {
     public var total: Int
 }
 
+/// A bookcase, with a type of its own nested in it.
+struct Bookcase {
+    @Describable
+    struct Label: Codable {
+        var text: String
+    }
+}
+
 @Suite
 struct DescribableMacroTests {
+    /// A nested type is named as Swift names it, with the type it's in, so two can share a name.
+    @Test
+    func aNestedTypeIsNamedWithWhatItsIn() {
+        #expect(Bookcase.Label.jsonSchema["title"] == "Bookcase.Label")
+        #expect(Copy.jsonSchema["title"] == "Copy")
+    }
+
     @Test
     func describesStructuresWithTheirDocComments() {
         #expect(

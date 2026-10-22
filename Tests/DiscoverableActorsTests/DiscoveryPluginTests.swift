@@ -26,7 +26,7 @@
 
             let reference = try json.decode(ActorReference.self)
             let remoteBell = try reference.resolve(using: second)
-            #expect(try await remoteBell.describe().title == "Doorbell")
+            #expect(try await remoteBell.describe().type == "Doorbell")
             #expect(try reference.actorID(using: second) == bell.id)
         }
     }

@@ -94,7 +94,7 @@ struct DiscoverableTests {
         let list = TodoList(actorSystem: system)
         let description = try await list.describe()
 
-        #expect(description.title == "TodoList")
+        #expect(description.type == "TodoList")
         #expect(description.description == "A list of things to do today.")
         #expect(Set(description.actions.keys) == ["add", "remove", "tag", "list", "label", "prioritize"])
         #expect(description.properties["itemCount"]?["description"] == "Number of items currently in the list.")

@@ -174,7 +174,7 @@ public struct DiscoverableMacro: MemberMacro, ExtensionMacro {
                 \(raw: eventsDeclaration)
                 \(raw: eventStatements.joined(separator: "\n"))
                 return DiscoverableActors.ObjectDescription(
-                    title: \(raw: literal(title)),
+                    type: \(raw: literal(title)),
                     description: \(raw: literal(description)),
                     properties: properties,
                     actions: actions,
@@ -217,8 +217,13 @@ public struct DiscoverableMacro: MemberMacro, ExtensionMacro {
             @discardableResult
             public distributed func invoke(
                 _ action: String,
-                arguments: DiscoverableActors.JSONValue
+                arguments: DiscoverableActors.JSONValue,
+                through type: String?
             ) async throws -> DiscoverableActors.JSONValue {
+                // Sent through a protocol, `any …`, it's for any actor taking the action.
+                if let type, !type.hasPrefix("any "), type != \(raw: literal(title)) {
+                    throw DiscoverableActors.DiscoveryError.notA(type, isA: \(raw: literal(title)))
+                }
                 switch action {
                 \(raw: cases.joined(separator: "\n"))
                 default:

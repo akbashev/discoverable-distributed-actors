@@ -174,7 +174,7 @@ struct LibraryExampleTests {
             #expect(try due.decode(String.self).hasPrefix("20"))
             #expect(offered == ["giveBack", "library"])
             let up = try back.decode(ActorReference.self)
-            #expect(try await up.resolve(using: system).describe().title == "Library")
+            #expect(try await up.resolve(using: system).describe().type == "Library")
 
             let afterReturn = try await library.invoke("search", arguments: ["title": "concurrency"])
             #expect(try afterReturn.decode([BookSummary].self).first?.available == 1)

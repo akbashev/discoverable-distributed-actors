@@ -117,7 +117,7 @@ struct ReferenceExplorationTests {
                     return
                 }
                 let description = try await stage("describe generic protocol result") { try await returned.describe() }
-                #expect(description.title == "Counter")
+                #expect(description.type == "Counter")
             }
         }
     }
@@ -152,7 +152,7 @@ struct ReferenceExplorationTests {
                 try await remote.reference()
             }
             let description = try await stage("describe system-bound reference") { try await direct.describe() }
-            #expect(description.title == "Counter")
+            #expect(description.type == "Counter")
 
             let boxed = try await stage("return boxed reference through system-bound protocol") {
                 try await remote.boxedReference()
@@ -193,7 +193,7 @@ struct ReferenceExplorationTests {
                 return
             }
             let description = try await stage("describe generic concrete result") { try await returned.describe() }
-            #expect(description.title == "Counter")
+            #expect(description.type == "Counter")
             let identity = try await stage("return generic identity through concrete actor") {
                 try await remote.genericIdentity()
             }
@@ -213,7 +213,7 @@ struct ReferenceExplorationTests {
             let remote = try ReferenceDirectory.resolve(id: directory.id, using: second)
             let returned = try await stage("return concrete actor") { try await remote.concrete() }
             let description = try await stage("describe returned concrete actor") { try await returned.describe() }
-            #expect(description.title == "Counter")
+            #expect(description.type == "Counter")
         }
     }
 
@@ -225,7 +225,7 @@ struct ReferenceExplorationTests {
             let remote = try ReferenceDirectory.resolve(id: directory.id, using: second)
             let returned = try await stage("return discoverable reference") { try await remote.reference() }
             let description = try await stage("describe returned reference") { try await returned.describe() }
-            #expect(description.title == "Counter")
+            #expect(description.type == "Counter")
         }
     }
 
@@ -241,7 +241,7 @@ struct ReferenceExplorationTests {
                 return
             }
             let description = try await stage("describe boxed reference") { try await returned.describe() }
-            #expect(description.title == "Counter")
+            #expect(description.type == "Counter")
             let value = try await stage("invoke boxed reference") {
                 try await returned.invoke("increment", arguments: ["amount": 3])
             }
@@ -263,7 +263,7 @@ struct ReferenceExplorationTests {
             #expect(id == child.id)
             let returned = try $DiscoverableActor<ClusterSystem>.resolve(id: id, using: second)
             let description = try await stage("describe actor resolved from typed ID") { try await returned.describe() }
-            #expect(description.title == "Counter")
+            #expect(description.type == "Counter")
         }
     }
 }

@@ -9,11 +9,13 @@ distributed actor GenericEcho<System>: DiscoverableActor where System: Distribut
     typealias ActorSystem = System
 
     distributed func describe() -> ObjectDescription {
-        ObjectDescription(title: "Echo", description: nil, actions: [:])
+        ObjectDescription(type: "Echo", description: nil, actions: [:])
     }
 
     @discardableResult
-    distributed func invoke(_ action: String, arguments: JSONValue) throws -> JSONValue { arguments }
+    distributed func invoke(_ action: String, arguments: JSONValue, through type: String?) throws -> JSONValue {
+        arguments
+    }
 
     distributed func read(property name: String) throws -> JSONValue { nil }
     distributed func _subscribe(_ subscriber: UUID, to event: String) async throws {
@@ -34,7 +36,7 @@ struct GenericActorInvokeTests {
         try await withTwoNodes { first, second in
             let echo = GenericEcho<ClusterSystem>(actorSystem: second)
             let stub = try $DiscoverableActor<ClusterSystem>.resolve(id: echo.id, using: first)
-            #expect(try await stub.describe().title == "Echo")
+            #expect(try await stub.describe().type == "Echo")
             #expect(try await stub.invoke("echo", arguments: ["a": 1]) == ["a": 1])
         }
     }

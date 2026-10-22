@@ -38,10 +38,11 @@ struct SchemaTests {
     @Test
     func foundationTypesHaveFixedSchemas() {
         #expect(Discovery.schema(for: Date.self)["format"] == "date-time")
-        #expect(Discovery.schema(for: URL.self) == ["type": "string", "format": "uri"])
-        #expect(Discovery.schema(for: UUID.self) == ["type": "string", "format": "uuid"])
+        #expect(Discovery.schema(for: Date.self)["title"] == "Date")
+        #expect(Discovery.schema(for: URL.self) == ["type": "string", "format": "uri", "title": "URL"])
+        #expect(Discovery.schema(for: UUID.self) == ["type": "string", "format": "uuid", "title": "UUID"])
         #expect(Discovery.schema(for: Data.self) == ["type": "string", "contentEncoding": "base64"])
-        #expect(Discovery.schema(for: Decimal.self) == ["type": "number"])
+        #expect(Discovery.schema(for: Decimal.self) == ["type": "number", "title": "Decimal"])
         #expect(Discovery.schema(for: Character.self) == ["type": "string", "minLength": 1, "maxLength": 1])
         #expect(Discovery.schema(for: JSONValue.self) == [:])
     }

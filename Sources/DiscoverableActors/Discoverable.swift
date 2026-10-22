@@ -72,13 +72,17 @@ public macro DiscoverableAction(
 @Resolvable
 public protocol DiscoverableActor: DistributedActor
 where ActorSystem: DistributedActorSystem<any Codable> {
-    /// A Thing Description subset for this actor.
+    /// What this actor is and takes: its type, its properties, actions and events.
     distributed func describe() async throws -> ObjectDescription
 
     /// Runs the named action with arguments matching its schema and returns its result as JSON.
     /// Actors in the result, including a returned actor, are references: `{"id": …}`.
+    ///
+    /// A call made through a type, as code that holds the actor as that type makes it, runs only
+    /// on an actor of that type: `type` is checked against ``ObjectDescription/type``, and an actor
+    /// of another type throws ``DiscoveryError/notA(_:isA:)``. `nil` is a call through no type.
     @discardableResult
-    distributed func invoke(_ action: String, arguments: JSONValue) async throws -> JSONValue
+    distributed func invoke(_ action: String, arguments: JSONValue, through type: String?) async throws -> JSONValue
 
     /// Reads the named distributed property.
     distributed func read(property name: String) async throws -> JSONValue
@@ -101,6 +105,12 @@ extension $DiscoverableActor: Encodable where ActorSystem.ActorID: Encodable {}
 extension $DiscoverableActor: Decodable where ActorSystem.ActorID: Decodable {}
 
 extension DiscoverableActor {
+    /// Runs the named action with arguments matching its schema, through no type.
+    @discardableResult
+    public nonisolated func invoke(_ action: String, arguments: JSONValue) async throws -> JSONValue {
+        try await invoke(action, arguments: arguments, through: nil)
+    }
+
     /// Runs the named action without arguments.
     @discardableResult
     public nonisolated func invoke(_ action: String) async throws -> JSONValue {
@@ -125,9 +135,11 @@ extension DiscoverableActor {
     }
 }
 
-/// A small W3C Thing Description inspired description of an actor.
+/// What an actor is and takes: its type, what it publishes, its actions, its events, and the
+/// protocols it declares for others to conform to.
 public struct ObjectDescription: Codable, Sendable, Equatable {
-    public var title: String
+    /// The type code knows it by, and calls it through: a `@Discoverable` actor's own name.
+    public var type: String
     public var description: String?
     /// Read-only property affordances keyed by property name. Values are never included.
     public var properties: [String: JSONValue]
@@ -136,42 +148,63 @@ public struct ObjectDescription: Codable, Sendable, Equatable {
     public var actions: [String: ObjectAction]
     /// Event affordances keyed by the event type's name.
     public var events: [String: ObjectEvent]
+    /// The protocols it declares, keyed by the name code writes them with, `Shop.RefundManager`:
+    /// what an actor conforming to one takes.
+    public var protocols: [String: ObjectProtocol]
 
     public init(
-        title: String,
+        type: String,
         description: String?,
         properties: [String: JSONValue] = [:],
         actions: [String: ObjectAction],
-        events: [String: ObjectEvent] = [:]
+        events: [String: ObjectEvent] = [:],
+        protocols: [String: ObjectProtocol] = [:]
     ) {
-        self.title = title
+        self.type = type
         self.description = description
         self.properties = properties
         self.actions = actions
         self.events = events
+        self.protocols = protocols
     }
 
     private enum CodingKeys: String, CodingKey {
-        case title, description, properties, actions, events
+        case type, description, properties, actions, events, protocols
     }
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        title = try container.decode(String.self, forKey: .title)
+        type = try container.decode(String.self, forKey: .type)
         description = try container.decodeIfPresent(String.self, forKey: .description)
         properties = try container.decode([String: JSONValue].self, forKey: .properties)
         actions = try container.decode([String: ObjectAction].self, forKey: .actions)
-        // A Thing Description leaves out `events` when there are none.
+        // `events` is left out when there are none.
         events = try container.decodeIfPresent([String: ObjectEvent].self, forKey: .events) ?? [:]
+        // `protocols` is left out when it declares none.
+        protocols = try container.decodeIfPresent([String: ObjectProtocol].self, forKey: .protocols) ?? [:]
     }
 
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(title, forKey: .title)
+        try container.encode(type, forKey: .type)
         try container.encodeIfPresent(description, forKey: .description)
         try container.encode(properties, forKey: .properties)
         try container.encode(actions, forKey: .actions)
         if !events.isEmpty { try container.encode(events, forKey: .events) }
+        if !protocols.isEmpty { try container.encode(protocols, forKey: .protocols) }
+    }
+}
+
+/// A protocol an actor declares: what an actor conforming to it takes, each requirement as an
+/// action is described.
+public struct ObjectProtocol: Codable, Sendable, Equatable {
+    public var description: String?
+    /// Its requirements, keyed by the method's name.
+    public var requirements: [String: ObjectAction]
+
+    public init(description: String?, requirements: [String: ObjectAction]) {
+        self.description = description
+        self.requirements = requirements
     }
 }
 
@@ -233,7 +266,7 @@ public struct ObjectAction: Codable, Sendable, Equatable {
         description = try container.decodeIfPresent(String.self, forKey: .description)
         input = try container.decodeIfPresent(JSONValue.self, forKey: .input)
         output = try container.decodeIfPresent(JSONValue.self, forKey: .output)
-        // Thing Description defaults both to false when absent.
+        // Both are false when absent.
         safe = try container.decodeIfPresent(Bool.self, forKey: .safe) ?? false
         idempotent = try container.decodeIfPresent(Bool.self, forKey: .idempotent) ?? false
         // A function declaring none is a plain one.
@@ -301,6 +334,8 @@ public enum DiscoveryError: Error, Codable, Equatable, Sendable {
     case invalidArgument(name: String, reason: String)
     /// The actor doesn't announce an event by this name.
     case unknownEvent(String)
+    /// A call made through a type the actor isn't: the type it was made through, and the actor's.
+    case notA(String, isA: String)
     /// A listener can't receive an event through `action`. `reason` says why, such as
     /// that it has no such action, or that the action doesn't take exactly one argument.
 }

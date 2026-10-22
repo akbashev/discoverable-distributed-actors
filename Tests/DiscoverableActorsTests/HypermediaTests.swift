@@ -82,7 +82,7 @@ struct HypermediaTests {
 
         let added = try await shelf.invoke("add", arguments: nil).decode(ActorReference.self)
         let box = try Box.resolve(id: added.actorID(using: system), using: system)
-        #expect(try await box.describe().title == "Box")
+        #expect(try await box.describe().type == "Box")
 
         let newest = try await shelf.invoke("newest", arguments: nil).decode(ActorReference.self)
         #expect(try newest.actorID(using: system) == box.id)

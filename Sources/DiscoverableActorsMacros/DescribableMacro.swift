@@ -15,11 +15,12 @@ public struct DescribableMacro: ExtensionMacro {
     ) throws -> [ExtensionDeclSyntax] {
         guard !protocols.isEmpty else { return [] }
 
+        // Named as Swift names it: a nested type with the types it's in, `Outer.Inner`.
         let schema: String
         if let structure = declaration.as(StructDeclSyntax.self) {
-            schema = named(structSchema(structure, context: context), structure.name.text)
+            schema = named(structSchema(structure, context: context), type.trimmedDescription)
         } else if let enumeration = declaration.as(EnumDeclSyntax.self) {
-            schema = named(enumSchema(enumeration), enumeration.name.text)
+            schema = named(enumSchema(enumeration), type.trimmedDescription)
         } else {
             context.diagnose(Diagnostic(node: node, message: SchemaDiagnostic.unsupportedDeclaration))
             return []
@@ -40,7 +41,7 @@ public struct DescribableMacro: ExtensionMacro {
     }
 }
 
-/// `schema` as the Swift type `name`: the name code declares it by.
+/// `schema` as the Swift type `name`: the name code declares it by, with the types it's in.
 private func named(_ schema: String, _ name: String) -> String {
     "DiscoverableActors._DiscoverySupport.named(\(schema), \(literal(name)))"
 }

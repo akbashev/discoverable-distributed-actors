@@ -44,7 +44,7 @@ struct GenericActorTests {
         let page = Page<String>(actorSystem: system, items: ["a", "b"])
         let description = try await page.describe()
 
-        #expect(description.title == "Page")
+        #expect(description.type == "Page")
         #expect(description.actions["item"]?.output == ["type": "string"])
         #expect(description.actions["append"]?.input?["properties"]?["item"]?["type"] == "string")
 

@@ -30,12 +30,14 @@ extension UInt32: Describable { public static var jsonSchema: JSONValue { ["type
 extension UInt64: Describable { public static var jsonSchema: JSONValue { ["type": "integer"] } }
 extension Double: Describable { public static var jsonSchema: JSONValue { ["type": "number"] } }
 extension Float: Describable { public static var jsonSchema: JSONValue { ["type": "number"] } }
-extension Decimal: Describable { public static var jsonSchema: JSONValue { ["type": "number"] } }
+/// Foundation's value types are named, as every type's schema is: code that reads a schema meets a
+/// `Date`, not a string.
+extension Decimal: Describable { public static var jsonSchema: JSONValue { ["type": "number", "title": "Decimal"] } }
 
 extension Date: Describable {
     public static var jsonSchema: JSONValue {
         [
-            "type": "string", "format": "date-time",
+            "type": "string", "format": "date-time", "title": "Date",
             "description":
                 "A date and time, such as 2026-10-01T09:00; without an offset, it's this device's local time.",
         ]
@@ -43,11 +45,11 @@ extension Date: Describable {
 }
 
 extension URL: Describable {
-    public static var jsonSchema: JSONValue { ["type": "string", "format": "uri"] }
+    public static var jsonSchema: JSONValue { ["type": "string", "format": "uri", "title": "URL"] }
 }
 
 extension UUID: Describable {
-    public static var jsonSchema: JSONValue { ["type": "string", "format": "uuid"] }
+    public static var jsonSchema: JSONValue { ["type": "string", "format": "uuid", "title": "UUID"] }
 }
 
 extension Data: Describable {

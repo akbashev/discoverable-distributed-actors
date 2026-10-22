@@ -97,7 +97,7 @@ struct ClusterTests {
         let counter = Counter(actorSystem: system)
         let object = try $DiscoverableActor<ClusterSystem>.resolve(id: counter.id, using: system)
 
-        #expect(try await object.describe().title == "Counter")
+        #expect(try await object.describe().type == "Counter")
         #expect(try await object.invoke("increment", arguments: ["amount": 2]) == 2)
     }
 
@@ -109,7 +109,7 @@ struct ClusterTests {
             let object = try $DiscoverableActor<ClusterSystem>.resolve(id: counter.id, using: second)
 
             let description = try await object.describe()
-            #expect(description.title == "Counter")
+            #expect(description.type == "Counter")
             #expect(
                 description.actions["increment"]?.input?["properties"]?["amount"]?["description"] == "How much to add.")
             #expect(description.properties["count"]?["type"] == "integer")
@@ -133,7 +133,7 @@ struct ClusterTests {
             let reference = try await root.invoke("counterActor", arguments: nil).decode(ActorReference.self)
             let child = try reference.resolve(using: second)
 
-            #expect(try await child.describe().title == "Counter")
+            #expect(try await child.describe().type == "Counter")
             #expect(try await child.invoke("increment", arguments: ["amount": 4]) == 4)
         }
     }

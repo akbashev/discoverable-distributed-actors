@@ -81,7 +81,7 @@ struct JSONValueCoderTests {
         // An action that returns an actor directly: a link, decoded as the actor.
         let box = try await dock.invoke("firstBox", as: Box.self)
         #expect(box.id == crate.box.id)
-        #expect(try await box.describe().title == "Box")
+        #expect(try await box.describe().type == "Box")
 
         // The type is always named: inferring it from context would also make
         // `invoke(_:arguments:)` match the typed overload (see its documentation).
