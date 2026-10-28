@@ -673,7 +673,7 @@ struct Documentation {
         var inCallouts = false
 
         for raw in Self.lines(in: trivia) {
-            let line = raw.trimmingCharacters(in: .whitespaces)
+            let line = raw.trimmingSpaces()
             let indent = raw.prefix(while: { $0 == " " || $0 == "\t" }).count
             let lowercased = line.lowercased()
 
@@ -694,8 +694,8 @@ struct Documentation {
                 continuing = nil
                 let entry = line.dropFirst(2)
                 if let colon = entry.firstIndex(of: ":") {
-                    let name = entry[..<colon].trimmingCharacters(in: .whitespaces).lowercased()
-                    callouts[name] = entry[entry.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+                    let name = entry[..<colon].trimmingSpaces().lowercased()
+                    callouts[name] = entry[entry.index(after: colon)...].trimmingSpaces()
                 }
             } else if !inCallouts {
                 if !line.isEmpty { summaryLines.append(line) }
@@ -707,7 +707,7 @@ struct Documentation {
             }
         }
 
-        let text = summaryLines.joined(separator: " ").trimmingCharacters(in: .whitespaces)
+        let text = summaryLines.joined(separator: " ").trimmingSpaces()
         summary = text.isEmpty ? nil : text
         parameters = parameters.filter { !$0.value.isEmpty }
     }
@@ -715,9 +715,9 @@ struct Documentation {
     /// Records a `name: description` entry and returns the name, or `nil` if it isn't one.
     private mutating func addParameter(_ entry: String) -> String? {
         guard let colon = entry.firstIndex(of: ":") else { return nil }
-        let name = entry[..<colon].trimmingCharacters(in: .whitespaces)
+        let name = entry[..<colon].trimmingSpaces()
         guard !name.isEmpty else { return nil }
-        parameters[name] = entry[entry.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+        parameters[name] = entry[entry.index(after: colon)...].trimmingSpaces()
         return name
     }
 
@@ -829,4 +829,14 @@ private enum DiscoveryIgnoredDiagnostic: DiagnosticMessage {
     }
 
     var severity: DiagnosticSeverity { .error }
+}
+
+extension StringProtocol {
+    /// The text without the spaces and tabs at its ends, as FoundationEssentials has no trimming.
+    fileprivate func trimmingSpaces() -> String {
+        let isSpace = { (character: Character) in character.isWhitespace && !character.isNewline }
+        guard let first = firstIndex(where: { !isSpace($0) }), let last = lastIndex(where: { !isSpace($0) })
+        else { return "" }
+        return String(self[first...last])
+    }
 }
