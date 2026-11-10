@@ -105,7 +105,7 @@ struct DescribableMacroTests {
                             ["const": "worn-out", "description": "Due for replacement."],
                         ],
                     ],
-                    "loans": ["type": "integer"],
+                    "loans": ["type": "integer", "x-swift-default": "0"],
                 ],
                 "required": ["isbn", "condition", "loans"],
             ])
