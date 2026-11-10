@@ -1,10 +1,8 @@
 import DiscoverableActors
-public import Distributed
+import Distributed
 import DistributedCluster
 import Logging
 import Testing
-
-extension $DiscoverableActor: Codable where ActorSystem.ActorID: Codable {}
 
 // Isolated experiments: these do not change the package's public API.
 enum ReferenceResult: Codable, Sendable {

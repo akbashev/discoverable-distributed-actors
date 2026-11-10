@@ -1,10 +1,12 @@
-// swift-tools-version: 6.2
+// swift-tools-version: 6.4
 import CompilerPluginSupport
 import PackageDescription
 
 /// Swift 7 behavior adopted early.
 let upcomingFeatures: [SwiftSetting] = [
     .enableUpcomingFeature("ExistentialAny"),
+    .enableUpcomingFeature("ImmutableWeakCaptures"),
+    .enableUpcomingFeature("InferIsolatedConformances"),
     .enableUpcomingFeature("InternalImportsByDefault"),
     .enableUpcomingFeature("MemberImportVisibility"),
     .enableUpcomingFeature("NonisolatedNonsendingByDefault"),

@@ -1,4 +1,4 @@
-public import Distributed
+package import Distributed
 import Synchronization
 
 /// How one actor system's actor IDs are written in discovery JSON and read back.
