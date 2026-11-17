@@ -55,9 +55,9 @@ public macro DiscoverableIgnored() =
 /// - Parameters:
 ///   - safe: Whether the action leaves the actor's state unchanged.
 ///   - idempotent: Whether repeating the action with the same arguments has no further effect.
-///   - when: A Boolean expression on the actor, such as a property name. While it is
-///     `false`, `describe()` omits the action and `invoke` rejects it with
-///     ``DiscoveryError/unavailableAction(_:)``.
+///   - when: A Boolean expression on the actor, such as a property name: the action is offered
+///     only while it holds. `describe()` states it, as ``ObjectAction/when``; while it is `false`,
+///     `invoke` rejects the action with ``DiscoveryError/unavailableAction(_:)``.
 @attached(peer)
 public macro DiscoverableAction(
     safe: Bool? = nil,
@@ -234,6 +234,9 @@ public struct ObjectAction: Codable, Sendable, Equatable {
     /// What its function's declaration says it may do besides return, as Swift writes it: wait,
     /// and throw.
     public var effects: [Effect]
+    /// The condition the action is offered under, as its declaration writes it; `nil` when it's
+    /// always offered. A call while it doesn't hold is refused.
+    public var when: String?
 
     /// An effect a function declares: `async`, `throws`.
     public enum Effect: String, Codable, Sendable, Equatable {
@@ -247,7 +250,8 @@ public struct ObjectAction: Codable, Sendable, Equatable {
         output: JSONValue? = nil,
         safe: Bool = false,
         idempotent: Bool = false,
-        effects: [Effect] = []
+        effects: [Effect] = [],
+        when: String? = nil
     ) {
         self.description = description
         self.input = input
@@ -255,10 +259,11 @@ public struct ObjectAction: Codable, Sendable, Equatable {
         self.safe = safe
         self.idempotent = idempotent
         self.effects = effects
+        self.when = when
     }
 
     private enum CodingKeys: String, CodingKey {
-        case description, input, output, safe, idempotent, effects
+        case description, input, output, safe, idempotent, effects, when
     }
 
     public init(from decoder: any Decoder) throws {
@@ -271,6 +276,7 @@ public struct ObjectAction: Codable, Sendable, Equatable {
         idempotent = try container.decodeIfPresent(Bool.self, forKey: .idempotent) ?? false
         // A function declaring none is a plain one.
         effects = try container.decodeIfPresent([Effect].self, forKey: .effects) ?? []
+        when = try container.decodeIfPresent(String.self, forKey: .when)
     }
 }
 

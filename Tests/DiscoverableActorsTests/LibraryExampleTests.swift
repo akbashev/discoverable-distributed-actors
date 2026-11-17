@@ -153,7 +153,8 @@ struct LibraryExampleTests {
             let due = try await loan.read(property: "due")  // "2026-10-13T12:15:00+02:00", in this device's time zone
             try await loan.invoke("renew")
             try await loan.invoke("renew")
-            let offered = try await loan.describe().actions.keys.sorted()  // ["giveBack", "library"]: no renewals left
+            let renewing = try await loan.describe().actions["renew"]?.when  // "!returned && renewals < 2"
+            // No renewals left: renewing again throws DiscoveryError.unavailableAction("renew").
 
             let back = try await loan.invoke("library")  // .actor: a link back to the library
 
@@ -172,7 +173,8 @@ struct LibraryExampleTests {
                     BookSummary(isbn: "978-2", title: "The Swift Programming Language", available: 2),
                 ])
             #expect(try due.decode(String.self).hasPrefix("20"))
-            #expect(offered == ["giveBack", "library"])
+            #expect(renewing == "!returned && renewals < 2")
+            await #expect(throws: DiscoveryError.unavailableAction("renew")) { try await loan.invoke("renew") }
             let up = try back.decode(ActorReference.self)
             #expect(try await up.resolve(using: system).describe().type == "Library")
 

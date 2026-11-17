@@ -89,6 +89,16 @@ struct DiscoverableTests {
         try #require(try await list.describe().actions[name])
     }
 
+    /// A type is described from its declaration, with no actor of it: the same as every actor of
+    /// it describes itself.
+    @Test
+    func aTypeIsDescribedWithoutAnActor() async throws {
+        let description = TodoList.describe()
+        #expect(description.type == "TodoList")
+        #expect(Set(description.actions.keys) == ["add", "remove", "tag", "list", "label", "prioritize"])
+        #expect(try await TodoList(actorSystem: system).describe() == description)
+    }
+
     @Test
     func describesPublicDistributedFunctions() async throws {
         let list = TodoList(actorSystem: system)

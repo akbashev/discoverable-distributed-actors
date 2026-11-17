@@ -88,12 +88,17 @@ struct HypermediaTests {
         #expect(try newest.actorID(using: system) == box.id)
     }
 
+    /// A description states the condition an action is offered under, as declared, whatever the
+    /// actor's state; a call is refused while it doesn't hold.
     @Test
-    func unavailableActionsAreHiddenAndRejected() async throws {
+    func conditionalActionsAreStatedAndRefusedWhileTheyDontHold() async throws {
         let shelf = Shelf(actorSystem: system)
 
-        let empty = try await shelf.describe().actions
-        #expect(Set(empty.keys) == ["add", "count", "drawer"])
+        let actions = try await shelf.describe().actions
+        #expect(Set(actions.keys) == ["add", "count", "drawer", "newest", "clear"])
+        #expect(actions["newest"]?.when == "hasBoxes")
+        #expect(actions["clear"]?.when == "!boxes.isEmpty")
+        #expect(actions["add"]?.when == nil)
         await #expect(throws: DiscoveryError.unavailableAction("newest")) {
             try await shelf.invoke("newest", arguments: nil)
         }
@@ -102,11 +107,11 @@ struct HypermediaTests {
         }
 
         _ = try await shelf.invoke("add", arguments: nil)
-        let stocked = try await shelf.describe().actions
-        #expect(Set(stocked.keys) == ["add", "count", "drawer", "newest", "clear"])
-
+        #expect(try await shelf.describe().actions == actions)
         #expect(try await shelf.invoke("clear", arguments: nil) == .null)
-        #expect(try await shelf.describe().actions["clear"] == nil)
+        await #expect(throws: DiscoveryError.unavailableAction("clear")) {
+            try await shelf.invoke("clear", arguments: nil)
+        }
     }
 
     @Test

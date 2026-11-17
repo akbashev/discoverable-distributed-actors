@@ -133,13 +133,11 @@ public struct DiscoverableMacro: MemberMacro, ExtensionMacro {
                     output: \(output),
                     safe: \(action.isSafe),
                     idempotent: \(action.isIdempotent),
-                    effects: [\([action.isAsync ? ".async" : nil, action.isThrowing ? ".throws" : nil].compactMap { $0 }.joined(separator: ", "))]
+                    effects: [\([action.isAsync ? ".async" : nil, action.isThrowing ? ".throws" : nil].compactMap { $0 }.joined(separator: ", "))],
+                    when: \(action.availability.map(literal) ?? "nil")
                 )
                 """
-            return conditional(
-                action.condition,
-                around: action.availability.map { "if (\($0)) {\n\(assignment)\n}" } ?? assignment
-            )
+            return conditional(action.condition, around: assignment)
         }
         let propertyStatements = properties.map { property in
             let schema =
@@ -167,6 +165,13 @@ public struct DiscoverableMacro: MemberMacro, ExtensionMacro {
         var generated: [DeclSyntax] = []
         let describe: DeclSyntax = """
             public distributed func describe() -> DiscoverableActors.ObjectDescription {
+                Self.describe()
+            }
+            """
+        generated.append(describe)
+        let describeType: DeclSyntax = """
+            /// What every actor of this type is and takes, as its declaration says.
+            public static func describe() -> DiscoverableActors.ObjectDescription {
                 \(raw: propertiesDeclaration)
                 \(raw: propertyStatements.joined(separator: "\n"))
                 \(raw: actionsDeclaration)
@@ -182,7 +187,7 @@ public struct DiscoverableMacro: MemberMacro, ExtensionMacro {
                 )
             }
             """
-        generated.append(describe)
+        generated.append(describeType)
 
         let cases = actions.map { action in
             let allowedKeys = action.parameters.map { literal($0.key) }.joined(separator: ", ")
