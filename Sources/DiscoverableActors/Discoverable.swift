@@ -151,6 +151,9 @@ public struct ObjectDescription: Codable, Sendable, Equatable {
     /// The protocols it declares, keyed by the name code writes them with, `Shop.RefundManager`:
     /// what an actor conforming to one takes.
     public var protocols: [String: ObjectProtocol]
+    /// The protocols it says it conforms to, by the names code writes them with,
+    /// `Shop.RefundManager`: an actor conforms to one only by saying so.
+    public var conforms: [String]
 
     public init(
         type: String,
@@ -158,7 +161,8 @@ public struct ObjectDescription: Codable, Sendable, Equatable {
         properties: [String: JSONValue] = [:],
         actions: [String: ObjectAction],
         events: [String: ObjectEvent] = [:],
-        protocols: [String: ObjectProtocol] = [:]
+        protocols: [String: ObjectProtocol] = [:],
+        conforms: [String] = []
     ) {
         self.type = type
         self.description = description
@@ -166,10 +170,11 @@ public struct ObjectDescription: Codable, Sendable, Equatable {
         self.actions = actions
         self.events = events
         self.protocols = protocols
+        self.conforms = conforms
     }
 
     private enum CodingKeys: String, CodingKey {
-        case type, description, properties, actions, events, protocols
+        case type, description, properties, actions, events, protocols, conforms
     }
 
     public init(from decoder: any Decoder) throws {
@@ -182,6 +187,8 @@ public struct ObjectDescription: Codable, Sendable, Equatable {
         events = try container.decodeIfPresent([String: ObjectEvent].self, forKey: .events) ?? [:]
         // `protocols` is left out when it declares none.
         protocols = try container.decodeIfPresent([String: ObjectProtocol].self, forKey: .protocols) ?? [:]
+        // `conforms` is left out when it says it conforms to none.
+        conforms = try container.decodeIfPresent([String].self, forKey: .conforms) ?? []
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -192,6 +199,7 @@ public struct ObjectDescription: Codable, Sendable, Equatable {
         try container.encode(actions, forKey: .actions)
         if !events.isEmpty { try container.encode(events, forKey: .events) }
         if !protocols.isEmpty { try container.encode(protocols, forKey: .protocols) }
+        if !conforms.isEmpty { try container.encode(conforms, forKey: .conforms) }
     }
 }
 
