@@ -94,6 +94,23 @@ struct EventTests {
         }
     }
 
+    /// An event known only by name, as a description lists it, is heard as its data.
+    @Test(.timeLimit(.minutes(1)))
+    func anEventIsHeardByItsName() async throws {
+        try await withTwoNodes { first, second in
+            let bell = Doorbell(actorSystem: first)
+            let remoteBell = try $DiscoverableActor<ClusterSystem>.resolve(id: bell.id, using: second)
+
+            let rings = try await remoteBell.subscribe(toEventNamed: "Rang")
+            try await bell.ring(by: "Ada")
+            for try await ring in rings {
+                #expect(ring == ["by": "Ada"])
+                break
+            }
+            await rings.cancel()
+        }
+    }
+
     @Test
     func subscribingToAnEventTheActorDoesntAnnounceFails() async throws {
         try await withTwoNodes { first, second in
@@ -128,22 +145,40 @@ struct EventTests {
         }
     }
 
-    @Test(.timeLimit(.minutes(1)))
-    func aQuietSubscriptionStaysOpenPastTheRemoteCallTimeout() async throws {
-        try await withTwoNodes { first, second in
-            let bell = Doorbell(actorSystem: first)
-            let remoteBell = try $DiscoverableActor<ClusterSystem>.resolve(id: bell.id, using: second)
+    // How long a wait lasts is the cluster's to say only with the ClusterSystem trait.
+    #if ClusterSystem
+        @Test(.timeLimit(.minutes(1)))
+        func aQuietSubscriptionStaysOpenPastTheRemoteCallTimeout() async throws {
+            try await withTwoNodes { first, second in
+                let bell = Doorbell(actorSystem: first)
+                let remoteBell = try $DiscoverableActor<ClusterSystem>.resolve(id: bell.id, using: second)
 
-            let rings = try await remoteBell.subscribe(to: Rang.self)
-            let listening = Task { () -> String? in
-                for try await ring in rings { return ring.by }
-                return nil
+                let rings = try await remoteBell.subscribe(to: Rang.self)
+                let listening = Task { () -> String? in
+                    for try await ring in rings { return ring.by }
+                    return nil
+                }
+                // Longer than a remote call may wait (5 seconds by default).
+                try await Task.sleep(for: .seconds(7))
+                try await bell.ring(by: "Ada")
+                #expect(try await listening.value == "Ada")
+                await rings.cancel()
             }
-            // Longer than a remote call may wait (5 seconds by default).
-            try await Task.sleep(for: .seconds(7))
-            try await bell.ring(by: "Ada")
-            #expect(try await listening.value == "Ada")
-            await rings.cancel()
         }
-    }
+
+        /// A wait for the next event lasts as long as it's let: past it, the loop fails, as it does
+        /// when the actor is gone, and whoever runs it decides what's next.
+        @Test(.timeLimit(.minutes(1)))
+        func aWaitThatRunsOutFailsTheLoop() async throws {
+            try await withTwoNodes { first, second in
+                let bell = Doorbell(actorSystem: first)
+                let remoteBell = try $DiscoverableActor<ClusterSystem>.resolve(id: bell.id, using: second)
+
+                let rings = try await remoteBell.subscribe(to: Rang.self, waitingAtMost: .seconds(1))
+                await #expect(throws: RemoteCallError.self) {
+                    for try await _ in rings {}
+                }
+            }
+        }
+    #endif
 }
