@@ -91,7 +91,8 @@ where ActorSystem: DistributedActorSystem<any Codable> {
     /// which is what to call; `@Discoverable` generates it.
     distributed func _subscribe(_ subscriber: UUID, to event: String) async throws
 
-    /// The subscriber's next event, waiting briefly for one. Plumbing behind ``DiscoverableActor/subscribe(to:)``.
+    /// The subscriber's next event, waiting for one as long as that takes. Plumbing behind
+    /// ``DiscoverableActor/subscribe(to:)``.
     distributed func _nextEvent(for subscriber: UUID) async throws -> _EventDelivery
 
     /// Ends `subscriber`'s subscription. Plumbing behind ``DiscoverableActor/subscribe(to:)``.
